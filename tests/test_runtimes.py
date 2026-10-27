@@ -75,7 +75,8 @@ async def test_node_lts_switches_on_2026_10_28(fetcher: Fetcher) -> None:
     assert today["latest"] == "26.12.1"
     assert today["next_lts"] == {"version": "26", "from": "2026-10-28"}
     assert today["eol"] == "2028-04-30"
-    assert today["maintained"][:3] == ["26", "24", "22"]
+    # 20 and 18 still have isMaintained (paid extended support) but are past EOL.
+    assert today["maintained"] == ["26", "24", "22"]
 
     tomorrow = runtime_info(node, TOMORROW)
     assert tomorrow["lts"] == "26.12.1"
@@ -175,3 +176,11 @@ async def test_unknown_slug_suggests_from_product_list(tmp_path: object) -> None
     with pytest.raises(ValueError, match="did you mean: python"):
         await lookup_product(fetcher, "pythn")
     await http.aclose()
+
+
+async def test_maintained_excludes_extended_support_after_eol(fetcher: Fetcher) -> None:
+    spring = runtime_info(await product(fetcher, "spring-boot"), TODAY)
+    assert spring["maintained"] == ["4.1", "4.0"]  # 3.5 is EOL since 2026-06-30
+    assert spring["eol"] == "2027-07-31"
+    node = await product(fetcher, "nodejs")
+    assert runtime_info(node, date(2027, 5, 1))["maintained"] == ["26", "24"]

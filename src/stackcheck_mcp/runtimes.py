@@ -8,6 +8,8 @@ Reduced product document::
 
 LTS status is recomputed against ``today`` rather than trusted from ``isLts``, because
 cached data outlives the day it was generated (Node 26 turns LTS on 2026-10-28).
+"Maintained" also requires the EOL date to be in the future: ``isMaintained`` stays true
+during paid extended support (Node 18/20, Spring Boot 3.5), which is not what agents need.
 Java targets use ``eclipse-temurin``: vendor-neutral OpenJDK builds with LTS flags.
 """
 
@@ -130,8 +132,13 @@ def next_lts(product: Product, today: date) -> Release | None:
     return min(upcoming, key=lambda pair: pair[0])[1] if upcoming else None
 
 
+def maintained(release: Release, today: date) -> bool:
+    eol = _date(release.get("eol"))
+    return bool(release.get("maintained")) and (eol is None or eol > today)
+
+
 def latest_maintained(product: Product, today: date) -> Release | None:
-    return next((r for r in sorted_releases(product, today) if r.get("maintained")), None)
+    return next((r for r in sorted_releases(product, today) if maintained(r, today)), None)
 
 
 def recommended(product: Product, today: date) -> Release | None:
@@ -153,9 +160,9 @@ def runtime_info(product: Product, today: date) -> RuntimeInfo:
         info["next_lts"] = cast(
             NextLts, {"version": upcoming["cycle"], "from": upcoming.get("lts_from", "")}
         )
-    maintained = [r["cycle"] for r in releases if r.get("maintained")][:5]
-    if maintained:
-        info["maintained"] = maintained
+    cycles = [r["cycle"] for r in releases if maintained(r, today)][:5]
+    if cycles:
+        info["maintained"] = cycles
     rec = recommended(product, today)
     if rec is not None and "eol" in rec:
         info["eol"] = rec["eol"]

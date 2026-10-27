@@ -8,6 +8,8 @@ tests in the same commit.
 from dataclasses import dataclass, field
 from typing import Literal, NotRequired, TypedDict
 
+from pydantic import ConfigDict, with_config
+
 Ecosystem = Literal["npm", "pypi", "maven"]
 
 IssueKind = Literal[
@@ -51,6 +53,7 @@ class RuntimeInfo(TypedDict):
     eol: NotRequired[str]
 
 
+@with_config(ConfigDict(extra="allow"))  # unknown keys are reported, not dropped
 class Targets(TypedDict, total=False):
     node: str
     python: str

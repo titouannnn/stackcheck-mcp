@@ -28,6 +28,7 @@ dependencies = [
     "packaging>=26",
     "node-semver>=0.9.1,<0.10",
     "platformdirs>=4.13",
+    "pydantic>=2.12",
 ]
 
 [project.urls]

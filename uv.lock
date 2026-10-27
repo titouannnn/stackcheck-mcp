@@ -1000,6 +1000,7 @@ dependencies = [
     { name = "node-semver" },
     { name = "packaging" },
     { name = "platformdirs" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -1017,6 +1018,7 @@ requires-dist = [
     { name = "node-semver", specifier = ">=0.9.1,<0.10" },
     { name = "packaging", specifier = ">=26" },
     { name = "platformdirs", specifier = ">=4.13" },
+    { name = "pydantic", specifier = ">=2.12" },
 ]
 
 [package.metadata.requires-dev]
