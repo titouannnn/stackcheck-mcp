@@ -28,6 +28,7 @@ from stackcheck_mcp.http import FetchError, HttpClient, NotFoundError
 log = logging.getLogger(__name__)
 
 DEFAULT_TTL = 21600.0
+# Bump whenever a reduced document's shape changes, so old entries are never misread.
 LAYOUT_VERSION = "v1"
 
 

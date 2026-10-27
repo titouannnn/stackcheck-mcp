@@ -144,6 +144,23 @@ async def test_targets_and_partial_errors() -> None:
     assert result["npm"] == {"vite": "8.3.5"}
 
 
+async def test_a_crashing_ecosystem_does_not_fail_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stackcheck_mcp import pypi
+
+    async def boom(*args: Any, **kwargs: Any) -> Any:
+        raise KeyError("unexpected")
+
+    monkeypatch.setattr(pypi, "check_pypi", boom)
+    async with Client(build_server(offline_app())) as client:
+        result = payload(
+            await client.call_tool("check_stack", {"npm": ["react"], "pypi": ["fastapi"]})
+        )
+    assert result["npm"] == {"react": "19.3.1"}
+    assert result["errors"] == {"pypi": {"*": "internal error: KeyError"}}
+
+
 async def test_empty_request_is_a_tool_error() -> None:
     async with Client(build_server(offline_app())) as client:
         result = await client.call_tool("check_stack", {"npm": []})

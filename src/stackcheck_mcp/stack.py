@@ -6,6 +6,7 @@ the targets the rules need, and assembles the compact answer.
 
 import asyncio
 import contextlib
+import logging
 import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -62,6 +63,8 @@ class App:
             self._http = None
 
 
+log = logging.getLogger(__name__)
+
 _EXTRA = re.compile(r"""extra\s*==\s*['"]([^'"]+)['"]""")
 
 
@@ -71,8 +74,17 @@ class InputError(ValueError):
 
 async def _swallow(coro: Coroutine[Any, Any, Any]) -> None:
     # The real check reports failures; this only warms the per-call memo.
-    with contextlib.suppress(FetchError, ValueError):
+    with contextlib.suppress(Exception):
         await coro
+
+
+async def _guarded(ecosystem: str, coro: Coroutine[Any, Any, EcosystemResult]) -> EcosystemResult:
+    """One ecosystem crashing must not fail the whole call (it lands in ``errors``)."""
+    try:
+        return await coro
+    except Exception as exc:
+        log.exception("%s check failed", ecosystem)
+        return EcosystemResult(errors={"*": f"internal error: {type(exc).__name__}"})
 
 
 def _prefetch(
@@ -163,15 +175,16 @@ async def check_stack(
     results: dict[str, EcosystemResult] = {}
 
     async def run_npm() -> None:
-        results["npm"] = await npm.check_npm(fetcher, npm_specs, resolved.get("node"))
+        check = npm.check_npm(fetcher, npm_specs, resolved.get("node"))
+        results["npm"] = await _guarded("npm", check)
 
     async def run_pypi() -> None:
-        results["pypi"] = await pypi.check_pypi(fetcher, pypi_specs, resolved.get("python"))
+        check = pypi.check_pypi(fetcher, pypi_specs, resolved.get("python"))
+        results["pypi"] = await _guarded("pypi", check)
 
     async def run_maven() -> None:
-        results["maven"] = await maven.check_maven(
-            fetcher, maven_specs, maven_bom, resolved.get("java")
-        )
+        check = maven.check_maven(fetcher, maven_specs, maven_bom, resolved.get("java"))
+        results["maven"] = await _guarded("maven", check)
 
     jobs = ([run_npm()] if npm_specs else []) + ([run_pypi()] if pypi_specs else [])
     jobs += [run_maven()] if maven_specs or maven_bom else []

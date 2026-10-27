@@ -34,3 +34,31 @@ Written 2026-10-27, before coding, as asked by `docs/SPEC.md` §13.
 ## 4. Milestones (one commit each, tests green)
 
 a. runtimes + cache + http · b. npm · c. PyPI · d. MCP server + stdio integration test · e. resolver validation + differential tests · f. Maven (+ BOM, Spring Boot Java check) · g. packaging, CI, README, server.json, `explain_issue`.
+
+## 5. Found during implementation
+
+6. **`isMaintained` includes paid extended support** (Node 18/20, Spring Boot 3.5 are
+   `isEol: true, isMaintained: true`). `maintained` therefore also requires the EOL date to
+   be in the future.
+7. **pydantic drops unknown keys of a `TypedDict` argument**, so `targets: {"ruby": "3"}`
+   would vanish silently. `Targets` allows extra keys and the server reports them in
+   `errors.targets`.
+8. **Maven version order**: implemented from the POM reference's "Version Order
+   Specification" and tested against every example in it. Running Maven's own
+   `ComparableVersion` from the `maven-artifact` jar as an oracle would be a stronger
+   check, but that was not allowed in this environment (it means executing a downloaded jar).
+9. **Spring Boot Java baseline**: `java.version` is set directly in
+   `spring-boot-starter-parent` (17 for 3.x/4.x, 1.8 for 2.x), so the check reads that POM
+   without walking its 140 KB parent BOM.
+10. **PyPI per-version metadata** uses the JSON API (`/pypi/<name>/<version>/json`, ~30 KB,
+    cached forever, reduced to `requires_dist`/`requires_python`). Using PEP 658
+    `.metadata` would mean storing one file URL per version in the reduced index.
+11. **Resolver validation never sees user input on a command line**: PyPI requirements go
+    through stdin and npm pins into a generated `package.json`.
+
+## 6. Results (2026-10-27)
+
+- Offline suite: `uv run pytest` passes (fixtures recorded 2026-10-27, dates frozen).
+- `-m resolvers`: every issue-free set resolves with uv/npm; every conflict pair is rejected.
+- `-m live`: property tests pass against the live registries.
+- Reference stack, live: cold 1.6 s, warm 60–80 ms, 963 bytes of compact JSON.

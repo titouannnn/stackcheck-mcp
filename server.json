@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.OWNER/stackcheck-mcp",
+  "title": "stackcheck",
+  "description": "Latest stable npm/PyPI/Maven versions plus the incompatibilities between them.",
+  "repository": {
+    "url": "https://github.com/OWNER/stackcheck-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "stackcheck-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "STACKCHECK_CACHE_DIR",
+          "description": "Cache directory (default: the platform cache dir)",
+          "isRequired": false
+        },
+        {
+          "name": "STACKCHECK_CACHE_TTL",
+          "description": "Cache TTL in seconds (default 21600, 0 disables the cache)",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
