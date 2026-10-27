@@ -5,6 +5,7 @@ Every field that can be empty is ``NotRequired`` and is omitted rather than sent
 tests in the same commit.
 """
 
+from dataclasses import dataclass, field
 from typing import Literal, NotRequired, TypedDict
 
 Ecosystem = Literal["npm", "pypi", "maven"]
@@ -89,3 +90,15 @@ class Explanation(TypedDict):
     dependencies: NotRequired[list[str]]
     error: NotRequired[str]
     stale: NotRequired[bool]
+
+
+@dataclass
+class EcosystemResult:
+    """Internal: what one ecosystem contributes to a ``check_stack`` answer."""
+
+    picks: dict[str, str] = field(default_factory=dict)
+    issues: list[Issue] = field(default_factory=list)
+    errors: dict[str, str] = field(default_factory=dict)
+    # Inputs for --resolver-validation: exact pins and the user's original specs.
+    pins: list[str] = field(default_factory=list)
+    specs: list[str] = field(default_factory=list)

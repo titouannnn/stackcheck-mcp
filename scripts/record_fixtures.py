@@ -14,10 +14,14 @@ from pathlib import Path
 
 from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.http import HttpClient
+from stackcheck_mcp.npm import check_npm
 from stackcheck_mcp.runtimes import fetch_product_list, runtime_infos, utc_today
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "cache"
+sys.path.insert(0, str(ROOT))
+
+from tests import reference_stack as ref  # noqa: E402
 
 RUNTIMES = ["nodejs", "python", "eclipse-temurin", "sqlite", "spring-boot"]
 
@@ -32,6 +36,10 @@ async def record() -> None:
         if errors:
             sys.exit(f"runtime errors: {errors}")
         print(f"runtimes: {sorted(infos)}")
+        npm = await check_npm(fetcher, ref.NPM + ref.NPM_EXTRA, None)
+        if npm.errors:
+            sys.exit(f"npm errors: {npm.errors}")
+        print(f"npm: {npm.picks}")
     finally:
         await http.aclose()
 
