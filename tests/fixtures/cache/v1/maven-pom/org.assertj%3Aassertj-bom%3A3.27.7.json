@@ -1,0 +1,1 @@
+{"key":"org.assertj:assertj-bom:3.27.7","fetched_at":"2026-10-27T11:23:25+00:00","data":{"g":"org.assertj","a":"assertj-bom","v":"3.27.7","props":{},"managed":{"org.assertj:assertj-core":"3.27.7","org.assertj:assertj-guava":"3.27.7"},"imports":[]}}

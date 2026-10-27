@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, cast
 
-from stackcheck_mcp import npm, pypi, validation
+from stackcheck_mcp import maven, npm, pypi, validation
 from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.http import FetchError, HttpClient
 from stackcheck_mcp.models import (
@@ -67,9 +67,17 @@ async def _swallow(coro: Coroutine[Any, Any, Any]) -> None:
         await coro
 
 
-def _prefetch(fetcher: Fetcher, npm_specs: list[str], pypi_specs: list[str]) -> list[Any]:
+def _prefetch(
+    fetcher: Fetcher, npm_specs: list[str], pypi_specs: list[str], maven_specs: list[str]
+) -> list[Any]:
     """Start registry fetches while targets resolve; the checks reuse them via the memo."""
     jobs: list[Any] = []
+    for raw in maven_specs:
+        try:
+            spec = maven.parse_spec(raw)
+        except ValueError:
+            continue
+        jobs.append(_swallow(maven.fetch_metadata(fetcher, spec.group, spec.artifact)))
     for raw in npm_specs:
         try:
             jobs.append(_swallow(npm.fetch_doc(fetcher, npm.parse_spec(raw).name)))
@@ -109,14 +117,18 @@ async def check_stack(
     *,
     npm_specs: list[str] | None = None,
     pypi_specs: list[str] | None = None,
+    maven_specs: list[str] | None = None,
+    maven_bom: str | None = None,
     runtimes: list[str] | None = None,
     targets: Targets | None = None,
 ) -> StackResult:
     npm_specs = [s for s in npm_specs or [] if s.strip()]
     pypi_specs = [s for s in pypi_specs or [] if s.strip()]
+    maven_specs = [s for s in maven_specs or [] if s.strip()]
+    maven_bom = maven_bom.strip() if maven_bom and maven_bom.strip() else None
     runtimes = [s for s in runtimes or [] if s.strip()]
-    if not (npm_specs or pypi_specs or runtimes):
-        raise InputError("pass at least one non-empty list: npm, pypi or runtimes")
+    if not (npm_specs or pypi_specs or maven_specs or maven_bom or runtimes):
+        raise InputError("pass at least one of npm, pypi, maven, maven_bom or runtimes")
 
     today = app.settings.today()
     fetcher = app.fetcher()
@@ -130,10 +142,12 @@ async def check_stack(
         wanted.setdefault("node", None)
     if pypi_specs:
         wanted.setdefault("python", None)
+    if maven_specs or maven_bom:
+        wanted.setdefault("java", None)
 
     targets_task = asyncio.ensure_future(resolve_targets(fetcher, wanted, today))
     runtimes_task = asyncio.ensure_future(runtime_infos(fetcher, runtimes, today))
-    prefetch = asyncio.gather(*_prefetch(fetcher, npm_specs, pypi_specs))
+    prefetch = asyncio.gather(*_prefetch(fetcher, npm_specs, pypi_specs, maven_specs))
     resolved, target_errors = await targets_task
     if target_errors:
         errors.setdefault("targets", {}).update(target_errors)
@@ -146,7 +160,13 @@ async def check_stack(
     async def run_pypi() -> None:
         results["pypi"] = await pypi.check_pypi(fetcher, pypi_specs, resolved.get("python"))
 
+    async def run_maven() -> None:
+        results["maven"] = await maven.check_maven(
+            fetcher, maven_specs, maven_bom, resolved.get("java")
+        )
+
     jobs = ([run_npm()] if npm_specs else []) + ([run_pypi()] if pypi_specs else [])
+    jobs += [run_maven()] if maven_specs or maven_bom else []
     await asyncio.gather(*jobs)
     await prefetch
     outcomes = await _validate(app.settings, results, resolved.get("python"))
@@ -157,7 +177,7 @@ async def check_stack(
         out["targets"] = resolved
     issues: list[Issue] = []
     statuses: dict[str, ValidationStatus] = {}
-    for ecosystem in ("npm", "pypi"):
+    for ecosystem in ("npm", "pypi", "maven"):
         result = results.get(ecosystem)
         if result is None:
             continue

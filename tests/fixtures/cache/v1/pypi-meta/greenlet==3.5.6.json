@@ -1,1 +1,1 @@
-{"key":"greenlet==3.5.6","fetched_at":"2026-10-27T11:03:44+00:00","data":{"requires_dist":["Sphinx; extra == \"docs\"","furo; extra == \"docs\"","objgraph; extra == \"test\"","psutil; extra == \"test\"","setuptools; extra == \"test\""],"requires_python":">=3.10"}}
+{"key":"greenlet==3.5.6","fetched_at":"2026-10-27T11:23:24+00:00","data":{"requires_dist":["Sphinx; extra == \"docs\"","furo; extra == \"docs\"","objgraph; extra == \"test\"","psutil; extra == \"test\"","setuptools; extra == \"test\""],"requires_python":">=3.10"}}

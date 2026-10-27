@@ -1,1 +1,1 @@
-{"key":"playwright==1.64.1","fetched_at":"2026-10-27T11:03:44+00:00","data":{"requires_dist":["pyee<15,>=13","greenlet<4.0.0,>=3.1.1"],"requires_python":">=3.10"}}
+{"key":"playwright==1.64.1","fetched_at":"2026-10-27T11:23:24+00:00","data":{"requires_dist":["pyee<15,>=13","greenlet<4.0.0,>=3.1.1"],"requires_python":">=3.10"}}

@@ -21,7 +21,7 @@ from stackcheck_mcp.http import HttpClient
 from stackcheck_mcp.server import build_server
 from stackcheck_mcp.stack import App, Settings
 from tests.conftest import FIXTURE_CACHE, TODAY, OfflineTransport, ReadOnlyCache
-from tests.reference_stack import REFERENCE
+from tests.reference_stack import MAVEN, MAVEN_BOM, REFERENCE
 
 EXPECTED_NPM = {
     "react": "19.3.1",
@@ -104,6 +104,24 @@ async def test_reference_stack_end_to_end() -> None:
         "eol": "2028-04-30",
     }
     assert result["runtimes"]["sqlite"] == {"latest": "3.54.1", "maintained": ["3"]}
+
+
+async def test_maven_with_bom() -> None:
+    request = {
+        "maven": MAVEN,
+        "maven_bom": MAVEN_BOM,
+        "targets": {"java": "21"},
+    }
+    async with Client(build_server(offline_app())) as client:
+        result = payload(await client.call_tool("check_stack", request))
+    assert result["targets"] == {"java": "21.0.13+9"}
+    assert result["maven"] == {
+        "org.springframework.boot:spring-boot-starter-web": "4.1.2",
+        "com.fasterxml.jackson.core:jackson-databind": "2.22.4",
+        "org.springframework.boot:spring-boot-dependencies": "4.1.2",
+    }
+    assert [i["kind"] for i in result["issues"]] == ["bom"]  # Java 21 >= baseline 17
+    assert "validation" not in result  # resolvers only cover npm and PyPI
 
 
 async def test_targets_and_partial_errors() -> None:

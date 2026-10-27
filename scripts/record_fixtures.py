@@ -14,6 +14,7 @@ from pathlib import Path
 
 from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.http import HttpClient
+from stackcheck_mcp.maven import check_maven
 from stackcheck_mcp.npm import check_npm
 from stackcheck_mcp.pypi import check_pypi
 from stackcheck_mcp.runtimes import fetch_product_list, runtime_infos, utc_today
@@ -46,6 +47,11 @@ async def record() -> None:
             if pypi.errors:
                 sys.exit(f"pypi errors: {pypi.errors}")
             print(f"pypi: {pypi.picks} issues={[i['kind'] for i in pypi.issues]}")
+        for java in ("25.0.5+8", "11.0.29+7"):
+            mvn = await check_maven(fetcher, ref.MAVEN, ref.MAVEN_BOM, java)
+            if mvn.errors:
+                sys.exit(f"maven errors: {mvn.errors}")
+            print(f"maven: {mvn.picks} issues={mvn.issues}")
     finally:
         await http.aclose()
 

@@ -35,3 +35,8 @@ PYPI_SCENARIOS = [
     ["pydantic", "pydantic-core<2.50"],  # impossible pin: pydantic requires ==2.50.1
     ["pydantic", "pydantic-core<2.47"],  # conflict with an older-pydantic alternative
 ]
+MAVEN = [
+    "org.springframework.boot:spring-boot-starter-web",
+    "com.fasterxml.jackson.core:jackson-databind",
+]
+MAVEN_BOM = "org.springframework.boot:spring-boot-dependencies"

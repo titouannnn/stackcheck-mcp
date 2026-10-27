@@ -1,0 +1,1 @@
+{"key":"io.prometheus:client_java_parent:1.7.0","fetched_at":"2026-10-27T11:23:25+00:00","data":{"g":"io.prometheus","a":"client_java_parent","v":"1.7.0","props":{"checkstyle.skip":"true","coverage.skip":"true","javadoc.skip":"true"},"managed":{},"imports":[]}}

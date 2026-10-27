@@ -53,22 +53,32 @@ def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
     async def check_stack(
         npm: Annotated[list[str], Field(default_factory=list, description="name or name@range")],
         pypi: Annotated[list[str], Field(default_factory=list, description="PEP 508, extras ok")],
+        maven: Annotated[
+            list[str], Field(default_factory=list, description="group:artifact[:version|range]")
+        ],
+        maven_bom: Annotated[str, Field(default="", description="BOM group:artifact[:version]")],
         runtimes: Annotated[list[str], Field(default_factory=list, description="endoflife slugs")],
         targets: Annotated[
             Targets,
             Field(
                 default_factory=dict,
-                description="cycle or version; default Node LTS, newest Python",
+                description="cycle or version; default Node LTS, newest Python, Java LTS",
             ),
         ],
     ) -> Annotated[CallToolResult, StackResult]:
         """Latest stable versions plus every incompatibility between the packages (peer deps,
-        requires_dist, engines, requires_python, wheels), with indicative fixes. Example:
+        requires_dist, engines, requires_python, wheels, BOM), with indicative fixes. Example:
         {"npm": ["react", "typescript", "typescript-eslint", "vite@^8"], "pypi": ["fastapi"]}
         """
         try:
             result = await stack.check_stack(
-                app, npm_specs=npm, pypi_specs=pypi, runtimes=runtimes, targets=targets
+                app,
+                npm_specs=npm,
+                pypi_specs=pypi,
+                maven_specs=maven,
+                maven_bom=maven_bom,
+                runtimes=runtimes,
+                targets=targets,
             )
         except stack.InputError as exc:
             raise ToolError(str(exc)) from None

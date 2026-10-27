@@ -54,6 +54,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-m 'not live and not resolvers' --strict-markers"
+filterwarnings = ["error::DeprecationWarning:stackcheck_mcp"]
 markers = [
     "live: hits the real registries (network); asserts properties, not exact versions",
     "resolvers: differential tests against real uv / npm (network, needs node + uv)",
