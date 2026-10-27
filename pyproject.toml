@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling>=1.32"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stackcheck-mcp"
+version = "0.1.0"
+description = "MCP server: latest stable npm/PyPI/Maven versions and the incompatibilities between them, in one call."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+keywords = ["mcp", "model-context-protocol", "dependencies", "npm", "pypi", "maven", "semver"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development :: Build Tools",
+    "Typing :: Typed",
+]
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx2>=2.16,<3",
+    "packaging>=26",
+    "node-semver>=0.9.1,<0.10",
+    "platformdirs>=4.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/OWNER/stackcheck-mcp"
+Issues = "https://github.com/OWNER/stackcheck-mcp/issues"
+
+[project.scripts]
+stackcheck-mcp = "stackcheck_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "ruff>=0.17",
+    "mypy>=2.4",
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE", "server.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not live and not resolvers' --strict-markers"
+markers = [
+    "live: hits the real registries (network); asserts properties, not exact versions",
+    "resolvers: differential tests against real uv / npm (network, needs node + uv)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+"scripts/**" = ["S"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["nodesemver", "nodesemver.*"]
+ignore_missing_imports = true
