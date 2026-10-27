@@ -12,3 +12,4 @@ htmlcov/
 # local caches (fixtures under tests/fixtures/cache are committed on purpose)
 /.cache/
 node_modules/
+/sweep/
