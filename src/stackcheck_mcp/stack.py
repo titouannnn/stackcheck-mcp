@@ -18,7 +18,7 @@ from packaging.version import Version
 
 from stackcheck_mcp import maven, npm, pypi, validation
 from stackcheck_mcp.cache import Cache, Fetcher
-from stackcheck_mcp.http import FetchError, HttpClient, NotFoundError
+from stackcheck_mcp.http import FetchError, HttpClient
 from stackcheck_mcp.models import (
     EcosystemResult,
     Explanation,
@@ -321,9 +321,7 @@ async def explain(app: App, ecosystem: str, package: str, version: str = "") -> 
     handlers = {"npm": _explain_npm, "pypi": _explain_pypi, "maven": _explain_maven}
     try:
         await handlers[ecosystem](fetcher, package, version.strip(), out)
-    except NotFoundError:
-        out["error"] = "not found"
-    except (FetchError, ValueError) as exc:
+    except (FetchError, ValueError) as exc:  # NotFoundError says "not found" or "unpublished"
         out["error"] = str(exc)
     if fetcher.stale:
         out["stale"] = True

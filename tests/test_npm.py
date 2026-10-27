@@ -322,3 +322,15 @@ async def test_one_failure_never_fails_the_call() -> None:
         "ok@^1": "duplicate package ignored",
     }
     await http.aclose()
+
+
+async def test_unpublished_package_is_reported_as_such() -> None:
+    # Real case: `contenthook`, whose abbreviated document keeps only these two fields.
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = {"name": "contenthook", "modified": "2024-11-23T15:01:33.779Z"}
+        return httpx2.Response(200, content=json.dumps(body))
+
+    http = mock_http(handler)
+    result = await check_npm(Fetcher(http, Cache(None)), ["contenthook"], None)
+    assert result.errors == {"contenthook": "unpublished"}
+    await http.aclose()

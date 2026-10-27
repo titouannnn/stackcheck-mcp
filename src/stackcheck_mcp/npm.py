@@ -91,6 +91,9 @@ def _str_map(value: Any) -> dict[str, str]:
 
 
 def reduce_doc(raw: Any) -> NpmDoc:
+    if isinstance(raw, dict) and "versions" not in raw and "dist-tags" not in raw:
+        # npm keeps only the name and a timestamp of an unpublished package.
+        raise NotFoundError("unpublished")
     try:
         versions_raw = raw["versions"]
         tags = raw.get("dist-tags") or {}
@@ -329,9 +332,7 @@ async def check_npm(fetcher: Fetcher, raw_specs: list[str], node: str | None) ->
     async def load(spec: NpmSpec) -> None:
         try:
             docs[spec.name] = await fetch_doc(fetcher, spec.name)
-        except NotFoundError:
-            result.errors[spec.name] = "not found"
-        except FetchError as exc:
+        except FetchError as exc:  # "not found", "unpublished", "HTTP 503"...
             result.errors[spec.name] = str(exc)
 
     await asyncio.gather(*(load(spec) for spec in specs))
