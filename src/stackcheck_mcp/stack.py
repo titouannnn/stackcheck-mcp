@@ -6,16 +6,21 @@ the targets the rules need, and assembles the compact answer.
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, cast
 
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
 from stackcheck_mcp import maven, npm, pypi, validation
 from stackcheck_mcp.cache import Cache, Fetcher
-from stackcheck_mcp.http import FetchError, HttpClient
+from stackcheck_mcp.http import FetchError, HttpClient, NotFoundError
 from stackcheck_mcp.models import (
     EcosystemResult,
+    Explanation,
     Issue,
     RuntimeResult,
     StackResult,
@@ -55,6 +60,9 @@ class App:
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+
+
+_EXTRA = re.compile(r"""extra\s*==\s*['"]([^'"]+)['"]""")
 
 
 class InputError(ValueError):
@@ -215,6 +223,95 @@ async def get_runtime_info(app: App, products: list[str]) -> RuntimeResult:
         out["runtimes"] = infos
     if errors:
         out["errors"] = errors
+    if fetcher.stale:
+        out["stale"] = True
+    return out
+
+
+async def _explain_npm(fetcher: Fetcher, package: str, version: str, out: Explanation) -> None:
+    spec = npm.parse_spec(package)
+    out["package"] = spec.name
+    doc = await npm.fetch_doc(fetcher, spec.name)
+    chosen = version or spec.range or ""
+    if not chosen or chosen not in doc["versions"]:
+        chosen = npm.pick(doc, chosen or None) or ""
+    if chosen not in doc["versions"]:
+        out["error"] = "version not found (only stable versions are indexed)"
+        return
+    out["version"] = chosen
+    info = npm.version_info(doc, chosen)
+    if "peer" in info:
+        out["peerDependencies"] = info["peer"]
+    if "optional" in info:
+        out["optionalPeers"] = info["optional"]
+    if "engines" in info:
+        out["engines"] = info["engines"]
+    if "deprecated" in info:
+        out["deprecated"] = info["deprecated"]
+
+
+async def _explain_pypi(fetcher: Fetcher, package: str, version: str, out: Explanation) -> None:
+    spec = pypi.parse_spec(package)
+    out["package"] = spec.name
+    index = await pypi.fetch_index(fetcher, spec.name)
+    chosen = str(Version(version)) if version else pypi.select(index, spec)[0]
+    if chosen is None or chosen not in index["versions"]:
+        out["error"] = "version not found (only stable versions are indexed)"
+        return
+    out["version"] = chosen
+    meta = await pypi.fetch_meta(fetcher, spec.name, chosen)
+    # Extra-guarded lines only for the extras asked for (``fastapi[standard]``): compact.
+    requires, extras = [], set()
+    for line in meta["requires_dist"]:
+        guards = {canonicalize_name(e) for e in _EXTRA.findall(line)}
+        extras |= guards
+        if not guards or guards & spec.extras:
+            requires.append(line)
+    if requires:
+        out["requires_dist"] = requires
+    if extras:
+        out["extras"] = sorted(extras)
+    requires_python = meta.get("requires_python") or pypi.version_info(index, chosen).get("rp")
+    if requires_python:
+        out["requires_python"] = requires_python
+    if yanked := pypi.version_info(index, chosen).get("yanked"):
+        out["yanked"] = yanked
+
+
+async def _explain_maven(fetcher: Fetcher, package: str, version: str, out: Explanation) -> None:
+    spec = maven.parse_spec(package)
+    out["package"] = spec.ga
+    chosen = version or (spec.range if spec.range and "[" not in spec.range else "")
+    if not chosen or "(" in chosen or "[" in chosen:
+        meta = await maven.fetch_metadata(fetcher, spec.group, spec.artifact)
+        chosen = maven.pick(meta, spec) or ""
+    if not chosen:
+        out["error"] = "no stable version found"
+        return
+    out["version"] = chosen
+    coords = f"{spec.ga}:{chosen}"
+    pom = await maven.fetch_pom(fetcher, coords)
+    model = await maven.load_effective(fetcher, coords)
+    if "parent" in pom:
+        out["parent"] = pom["parent"]
+    deps = [maven.interpolate(d, model.props) for d in pom.get("deps", [])]
+    if deps:
+        out["dependencies"] = deps
+
+
+async def explain(app: App, ecosystem: str, package: str, version: str = "") -> Explanation:
+    """Declarations of one exact version (latest stable when ``version`` is empty)."""
+    if ecosystem not in ("npm", "pypi", "maven"):
+        raise InputError("ecosystem must be npm, pypi or maven")
+    fetcher = app.fetcher()
+    out = cast(Explanation, {"ecosystem": ecosystem, "package": package.strip()})
+    handlers = {"npm": _explain_npm, "pypi": _explain_pypi, "maven": _explain_maven}
+    try:
+        await handlers[ecosystem](fetcher, package, version.strip(), out)
+    except NotFoundError:
+        out["error"] = "not found"
+    except (FetchError, ValueError) as exc:
+        out["error"] = str(exc)
     if fetcher.stale:
         out["stale"] = True
     return out

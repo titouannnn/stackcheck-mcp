@@ -87,6 +87,7 @@ class Explanation(TypedDict):
     engines: NotRequired[dict[str, str]]
     deprecated: NotRequired[str]
     requires_dist: NotRequired[list[str]]
+    extras: NotRequired[list[str]]
     requires_python: NotRequired[str]
     yanked: NotRequired[str]
     parent: NotRequired[str]

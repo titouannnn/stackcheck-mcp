@@ -5,7 +5,8 @@ stable versions only, in Maven order. Reduced POM (``maven-pom`` namespace, key
 ``group:artifact:version``, immutable)::
 
     {"g": "...", "a": "...", "v": "...", "parent": "g:a:v", "props": {...},
-     "managed": {"g:a": "raw version"}, "imports": ["g:a:raw version"]}
+     "managed": {"g:a": "raw version"}, "imports": ["g:a:raw version"],
+     "deps": ["g:a:raw version (scope)"]}
 
 Versions in a POM stay raw (``${...}``) because properties can come from a parent.
 The Spring Boot Java baseline is the ``java.version`` property of
@@ -51,6 +52,7 @@ class Pom(TypedDict):
     props: dict[str, str]
     managed: dict[str, str]
     imports: list[str]
+    deps: NotRequired[list[str]]
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,16 @@ def reduce_pom(text: str) -> Pom:
             imports.append(f"{group}:{artifact}:{version}")
         else:
             managed.setdefault(f"{group}:{artifact}", version)
+    deps_list = []
+    for dep in _children(_child(root, "dependencies")):
+        group, artifact = _text(dep, "groupId"), _text(dep, "artifactId")
+        if not (group and artifact):
+            continue
+        scope = _text(dep, "scope") or "compile"
+        if scope == "test":
+            continue
+        entry = f"{group}:{artifact}:{_text(dep, 'version') or '(managed)'}"
+        deps_list.append(entry if scope == "compile" else f"{entry} ({scope})")
     group = _text(root, "groupId") or (parent.split(":")[0] if parent else "")
     version = _text(root, "version") or (parent.split(":")[2] if parent else "")
     pom: Pom = {
@@ -157,6 +169,8 @@ def reduce_pom(text: str) -> Pom:
     }
     if parent:
         pom["parent"] = parent
+    if deps_list:
+        pom["deps"] = deps_list
     return pom
 
 

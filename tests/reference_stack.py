@@ -40,3 +40,8 @@ MAVEN = [
     "com.fasterxml.jackson.core:jackson-databind",
 ]
 MAVEN_BOM = "org.springframework.boot:spring-boot-dependencies"
+EXPLAIN = [
+    ("npm", "typescript-eslint", "8.72.1"),
+    ("pypi", "fastapi", ""),
+    ("maven", "org.springframework.boot:spring-boot-starter-web", ""),
+]

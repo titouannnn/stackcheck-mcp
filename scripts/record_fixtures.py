@@ -18,6 +18,7 @@ from stackcheck_mcp.maven import check_maven
 from stackcheck_mcp.npm import check_npm
 from stackcheck_mcp.pypi import check_pypi
 from stackcheck_mcp.runtimes import fetch_product_list, runtime_infos, utc_today
+from stackcheck_mcp.stack import App, explain
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "cache"
@@ -52,6 +53,11 @@ async def record() -> None:
             if mvn.errors:
                 sys.exit(f"maven errors: {mvn.errors}")
             print(f"maven: {mvn.picks} issues={mvn.issues}")
+        app = App(cache=fetcher.cache, http_factory=lambda: http)
+        for ecosystem, package, version in ref.EXPLAIN:
+            explained = await explain(app, ecosystem, package, version)
+            if "error" in explained:
+                sys.exit(f"explain errors: {explained}")
     finally:
         await http.aclose()
 

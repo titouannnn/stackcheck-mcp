@@ -15,7 +15,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
 from stackcheck_mcp import __version__, stack
-from stackcheck_mcp.models import RuntimeResult, StackResult, Targets
+from stackcheck_mcp.models import Ecosystem, Explanation, RuntimeResult, StackResult, Targets
 
 INSTRUCTIONS = (
     "Before pinning or upgrading dependencies, call check_stack once with the whole stack "
@@ -93,6 +93,22 @@ def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
         """
         try:
             result = await stack.get_runtime_info(app, products)
+        except stack.InputError as exc:
+            raise ToolError(str(exc)) from None
+        return compact(result)
+
+    @server.tool(annotations=READ_ONLY)
+    async def explain_issue(
+        ecosystem: Ecosystem,
+        package: Annotated[str, Field(description="npm name, PyPI name[extras], group:artifact")],
+        version: Annotated[str, Field(default="", description="default: latest stable")],
+    ) -> Annotated[CallToolResult, Explanation]:
+        """Declared peer deps/engines (npm), requires_dist/requires_python (PyPI) or parent and
+        dependencies (Maven) of one version, to dig into an issue. Example:
+        {"ecosystem": "npm", "package": "typescript-eslint", "version": "8.72.1"}
+        """
+        try:
+            result = await stack.explain(app, ecosystem, package, version)
         except stack.InputError as exc:
             raise ToolError(str(exc)) from None
         return compact(result)

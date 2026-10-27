@@ -86,7 +86,7 @@ def assert_no_empty_values(value: Any) -> None:
 async def test_reference_stack_end_to_end() -> None:
     async with Client(build_server(offline_app())) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        assert set(tools) == {"check_stack", "get_runtime_info"}
+        assert set(tools) == {"check_stack", "get_runtime_info", "explain_issue"}
         result = payload(await client.call_tool("check_stack", REFERENCE))
     jsonschema.validate(result, tools["check_stack"].output_schema)  # type: ignore[arg-type]
     assert_no_empty_values(result)
@@ -159,6 +159,41 @@ async def test_get_runtime_info_with_unknown_slug() -> None:
         )
     assert result["runtimes"]["python"]["latest"] == "3.15.2"
     assert result["errors"]["pythn"].startswith("unknown product; did you mean: python")
+
+
+async def test_explain_issue() -> None:
+    async with Client(build_server(offline_app())) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+        calls = [
+            {"ecosystem": "npm", "package": "typescript-eslint", "version": "8.72.1"},
+            {"ecosystem": "pypi", "package": "fastapi[standard]"},
+            {"ecosystem": "maven", "package": "org.springframework.boot:spring-boot-starter-web"},
+            {"ecosystem": "npm", "package": "typescript", "version": "9.9.9"},
+        ]
+        npm, pypi, maven, missing = [
+            payload(await client.call_tool("explain_issue", call)) for call in calls
+        ]
+        invalid = await client.call_tool("explain_issue", {"ecosystem": "cargo", "package": "x"})
+    for result in (npm, pypi, maven, missing):
+        jsonschema.validate(result, tools["explain_issue"].output_schema)  # type: ignore[arg-type]
+    assert npm == {
+        "ecosystem": "npm",
+        "package": "typescript-eslint",
+        "version": "8.72.1",
+        "peerDependencies": {
+            "eslint": "^8.57.0 || ^9.0.0 || ^10.0.0",
+            "typescript": ">=4.8.4 <6.1.0",
+        },
+        "engines": {"node": "^18.18.0 || ^20.9.0 || >=21.1.0"},
+    }
+    assert pypi["version"] == "0.162.0" and pypi["requires_python"] == ">=3.10"
+    assert 'uvicorn[standard]>=0.12.0; extra == "standard"' in pypi["requires_dist"]
+    assert not any('extra == "all"' in line for line in pypi["requires_dist"])
+    assert "standard" in pypi["extras"]
+    assert maven["version"] == "4.1.2"
+    assert "org.springframework.boot:spring-boot-starter-tomcat:4.1.2" in maven["dependencies"]
+    assert missing["error"] == "version not found (only stable versions are indexed)"
+    assert invalid.is_error
 
 
 @pytest.fixture
