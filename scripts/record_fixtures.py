@@ -15,6 +15,7 @@ from pathlib import Path
 from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.http import HttpClient
 from stackcheck_mcp.npm import check_npm
+from stackcheck_mcp.pypi import check_pypi
 from stackcheck_mcp.runtimes import fetch_product_list, runtime_infos, utc_today
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +41,11 @@ async def record() -> None:
         if npm.errors:
             sys.exit(f"npm errors: {npm.errors}")
         print(f"npm: {npm.picks}")
+        for specs in ref.PYPI_SCENARIOS:
+            pypi = await check_pypi(fetcher, specs, "3.15.2")
+            if pypi.errors:
+                sys.exit(f"pypi errors: {pypi.errors}")
+            print(f"pypi: {pypi.picks} issues={[i['kind'] for i in pypi.issues]}")
     finally:
         await http.aclose()
 

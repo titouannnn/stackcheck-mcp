@@ -1,0 +1,1 @@
+{"key":"pydantic==2.9.0","fetched_at":"2026-10-27T11:03:44+00:00","data":{"requires_dist":["annotated-types>=0.4.0","pydantic-core==2.23.2","typing-extensions>=4.12.2; python_version >= \"3.13\"","typing-extensions>=4.6.1; python_version < \"3.13\"","tzdata; python_version >= \"3.9\"","email-validator>=2.0.0; extra == \"email\""],"requires_python":">=3.8"}}

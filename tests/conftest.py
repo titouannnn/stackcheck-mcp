@@ -5,10 +5,10 @@ path; its HTTP transport fails every request, so a missing fixture shows up as a
 instead of a silent network call.
 """
 
-import shutil
 from collections.abc import AsyncIterator, Callable
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import httpx2
 import pytest
@@ -35,11 +35,16 @@ def offline_transport() -> OfflineTransport:
     return OfflineTransport()
 
 
+class ReadOnlyCache(Cache):
+    """The recorded fixtures, never written to by tests."""
+
+    def put(self, namespace: str, key: str, data: Any) -> None:
+        pass
+
+
 @pytest.fixture
-def fixture_cache(tmp_path: Path) -> Cache:
-    directory = tmp_path / "cache"
-    shutil.copytree(FIXTURE_CACHE, directory)
-    return Cache(directory, ttl=FOREVER)
+def fixture_cache() -> Cache:
+    return ReadOnlyCache(FIXTURE_CACHE, ttl=FOREVER)
 
 
 @pytest.fixture

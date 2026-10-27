@@ -28,3 +28,10 @@ REFERENCE = {"npm": NPM, "pypi": PYPI, "runtimes": RUNTIMES}
 
 # Extra packages recorded for edge-case tests.
 NPM_EXTRA = ["request", "@types/node"]
+PYPI_EXTRA = ["pydantic-core", "greenlet", "httptools", "uvloop"]
+PYPI_SCENARIOS = [
+    PYPI + PYPI_EXTRA,
+    ["fastapi", "pydantic<2.13"],
+    ["pydantic", "pydantic-core<2.50"],  # impossible pin: pydantic requires ==2.50.1
+    ["pydantic", "pydantic-core<2.47"],  # conflict with an older-pydantic alternative
+]
