@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, cast
 
-from stackcheck_mcp import npm, pypi
+from stackcheck_mcp import npm, pypi, validation
 from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.http import FetchError, HttpClient
 from stackcheck_mcp.models import (
@@ -83,8 +83,25 @@ def _prefetch(fetcher: Fetcher, npm_specs: list[str], pypi_specs: list[str]) -> 
     return jobs
 
 
-def _validation(settings: Settings, ecosystem: str) -> ValidationStatus:
-    return "skipped"
+async def _validate(
+    settings: Settings, results: dict[str, EcosystemResult], python: str | None
+) -> dict[str, validation.Outcome]:
+    """Real-resolver checks of the picks; ``skipped`` unless enabled at startup."""
+    with_picks = [eco for eco in ("npm", "pypi") if eco in results and results[eco].picks]
+    if not settings.resolver_validation:
+        return {eco: validation.Outcome("skipped") for eco in with_picks}
+    jobs = []
+    for eco in with_picks:
+        result = results[eco]
+        if eco == "npm":
+            jobs.append(validation.validate_npm(result.pins, settings.resolver_timeout))
+        else:
+            jobs.append(
+                validation.validate_pypi(
+                    result.pins, result.specs, python, settings.resolver_timeout
+                )
+            )
+    return dict(zip(with_picks, await asyncio.gather(*jobs), strict=True))
 
 
 async def check_stack(
@@ -132,23 +149,26 @@ async def check_stack(
     jobs = ([run_npm()] if npm_specs else []) + ([run_pypi()] if pypi_specs else [])
     await asyncio.gather(*jobs)
     await prefetch
+    outcomes = await _validate(app.settings, results, resolved.get("python"))
     runtime_data, runtime_errors = await runtimes_task
 
     out: dict[str, Any] = {}
     if resolved:
         out["targets"] = resolved
     issues: list[Issue] = []
-    validation: dict[str, ValidationStatus] = {}
+    statuses: dict[str, ValidationStatus] = {}
     for ecosystem in ("npm", "pypi"):
         result = results.get(ecosystem)
         if result is None:
             continue
         if result.picks:
             out[ecosystem] = result.picks
-            validation[ecosystem] = _validation(app.settings, ecosystem)
         issues += result.issues
         if result.errors:
             errors[ecosystem] = result.errors
+    for ecosystem, outcome in outcomes.items():
+        statuses[ecosystem] = outcome.status
+        issues += outcome.issues
     if runtime_data:
         out["runtimes"] = runtime_data
     if runtime_errors:
@@ -157,8 +177,8 @@ async def check_stack(
         out["issues"] = issues
     if errors:
         out["errors"] = errors
-    if validation:
-        out["validation"] = validation
+    if statuses:
+        out["validation"] = statuses
     if fetcher.stale:
         out["stale"] = True
     return cast(StackResult, out)
