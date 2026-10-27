@@ -123,16 +123,23 @@ def _stable(version: str) -> str | None:
     return str(parsed)
 
 
-def _file_version(filename: str) -> tuple[str, str] | None:
-    """``(normalized version, "wheel" | "sdist")`` parsed from a distribution filename."""
+def _file_version(filename: str) -> tuple[str, str, str] | None:
+    """``(normalized name, normalized version, "wheel" | "sdist")`` from a distribution filename.
+
+    Legacy sdist names are ambiguous: ``selenium-2.0-dev-9429.tar.gz`` parses as project
+    ``selenium-2.0-dev``, version ``9429``. Callers must check the name.
+    """
     try:
         if filename.endswith(".whl"):
-            return str(parse_wheel_filename(filename)[1]), "wheel"
+            name, version, *_ = parse_wheel_filename(filename)
+            return name, str(version), "wheel"
         if filename.endswith((".tar.gz", ".zip")):
-            return str(parse_sdist_filename(filename)[1]), "sdist"
+            name, version = parse_sdist_filename(filename)
+            return name, str(version), "sdist"
         for extension in _SDIST_EXTENSIONS:
             if filename.endswith(extension):
-                return str(Version(filename[: -len(extension)].rpartition("-")[2])), "sdist"
+                stem, _, raw = filename[: -len(extension)].rpartition("-")
+                return canonicalize_name(stem), str(Version(raw)), "sdist"
     except (InvalidWheelFilename, InvalidSdistFilename, InvalidVersion):
         return None
     return None
@@ -225,15 +232,20 @@ def reduce_simple(raw: Any) -> PypiIndex:
     try:
         name = canonicalize_name(str(raw["name"]))
         files: dict[str, _Files] = {}
-        for version in raw.get("versions") or []:
+        listed = raw.get("versions") or []
+        for version in listed:
             if (stable := _stable(str(version))) is not None:
                 files.setdefault(stable, _Files())
         for item in raw["files"]:
             parsed = _file_version(str(item["filename"]))
-            if parsed is None or (parsed[0] not in files and _stable(parsed[0]) is None):
+            if parsed is None or parsed[0] != name:
                 continue
-            files.setdefault(parsed[0], _Files()).add(
-                item["filename"], parsed[1], item.get("requires-python"), item.get("yanked")
+            _, version, kind = parsed
+            # The project's version list (API >= 1.1) is authoritative over filenames.
+            if version not in files and (listed or _stable(version) is None):
+                continue
+            files.setdefault(version, _Files()).add(
+                item["filename"], kind, item.get("requires-python"), item.get("yanked")
             )
         project_status = raw.get("project-status") or {}
         status = project_status.get("status")

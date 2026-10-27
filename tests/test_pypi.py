@@ -181,6 +181,19 @@ def test_stable_filter() -> None:
     assert list(index["versions"]) == ["1.0", "1.0.post1", "1.0.9", "1.0.10"]
 
 
+@pytest.mark.parametrize("listed", [["1.0", "2.0-dev-9429"], []])
+def test_legacy_sdist_name_is_not_read_as_a_version(listed: list[str]) -> None:
+    # Real case: selenium's `selenium-2.0-dev-9429.tar.gz` was picked as version "9429".
+    files = [
+        {"filename": "demo-1.0-py3-none-any.whl"},
+        {"filename": "demo-2.0-dev-9429.tar.gz"},
+        {"filename": "demo-2.0-dev-9429.tar.bz2"},
+        {"filename": "other-3.0-py3-none-any.whl"},
+    ]
+    index = reduce_simple(simple(files, listed))
+    assert list(index["versions"]) == ["1.0"]
+
+
 def test_yanked_detection_requires_all_files() -> None:
     files = [
         {"filename": "demo-1.0-py3-none-any.whl"},
