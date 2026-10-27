@@ -48,6 +48,7 @@ NextLts = TypedDict("NextLts", {"version": str, "from": str})
 class RuntimeInfo(TypedDict):
     latest: NotRequired[str]
     lts: NotRequired[str]
+    lts_eol: NotRequired[bool]  # only ever true: that LTS is past its end of life
     next_lts: NotRequired[NextLts]
     maintained: NotRequired[list[str]]
     eol: NotRequired[str]

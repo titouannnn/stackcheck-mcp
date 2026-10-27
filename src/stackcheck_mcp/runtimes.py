@@ -141,10 +141,16 @@ def latest_maintained(product: Product, today: date) -> Release | None:
     return next((r for r in sorted_releases(product, today) if maintained(r, today)), None)
 
 
+def maintained_lts(product: Product, today: date) -> Release | None:
+    """The active LTS, unless it is past its end of life (Laravel 6 is its newest LTS)."""
+    lts = active_lts(product, today)
+    return lts if lts is not None and maintained(lts, today) else None
+
+
 def recommended(product: Product, today: date) -> Release | None:
-    """The cycle a new project should use: active LTS, else newest maintained, else newest."""
+    """The cycle a new project should use: maintained LTS, else newest maintained, else newest."""
     releases = sorted_releases(product, today)
-    if has_lts(product) and (lts := active_lts(product, today)) is not None:
+    if has_lts(product) and (lts := maintained_lts(product, today)) is not None:
         return lts
     return latest_maintained(product, today) or (releases[0] if releases else None)
 
@@ -156,6 +162,8 @@ def runtime_info(product: Product, today: date) -> RuntimeInfo:
         info["latest"] = releases[0]["latest"]
     if has_lts(product) and (lts := active_lts(product, today)) is not None:
         info["lts"] = lts["latest"]
+        if not maintained(lts, today):
+            info["lts_eol"] = True
     if (upcoming := next_lts(product, today)) is not None:
         info["next_lts"] = cast(
             NextLts, {"version": upcoming["cycle"], "from": upcoming.get("lts_from", "")}
@@ -170,10 +178,14 @@ def runtime_info(product: Product, today: date) -> RuntimeInfo:
 
 
 def default_target(kind: str, product: Product, today: date) -> Release | None:
-    """Node and Java: active LTS. Python: newest maintained released cycle."""
+    """Node and Java: maintained LTS. Python: newest maintained released cycle."""
     if kind == "python":
         return latest_maintained(product, today)
-    return active_lts(product, today) or latest_maintained(product, today)
+    return (
+        maintained_lts(product, today)
+        or latest_maintained(product, today)
+        or active_lts(product, today)
+    )
 
 
 def resolve_target(kind: str, product: Product, spec: str | None, today: date) -> str:

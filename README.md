@@ -89,7 +89,7 @@ All fields are optional, but at least one list is required.
 - `maven_bom`: a BOM to align against (`groupId:artifactId[:version|range]`, latest by default).
 - `runtimes`: any [endoflife.date](https://endoflife.date) slug (aliases like `node` work).
 - `targets`: a cycle (`"24"`, `"3.14"`), a prefix (`"3"`) or an exact version. Defaults:
-  Node = active LTS, Python = newest released maintained cycle, Java = latest LTS of
+  Node = active maintained LTS, Python = newest released maintained cycle, Java = latest LTS of
   `eclipse-temurin`. A target is resolved (and shown) only when an ecosystem needs it.
 
 Answer for the reference stack (the [spec](docs/SPEC.md) §9 stack, live on 2026-10-27, 963
@@ -121,9 +121,11 @@ bytes):
 ### `get_runtime_info`
 
 `{"products": ["nodejs", "python", "eclipse-temurin"]}` → per product: `latest`, `lts`
-(products with LTS), `next_lts` (`{"version", "from"}` when a cycle becomes LTS later),
-`maintained` (newest first, max 5, past-EOL extended-support cycles excluded) and `eol` of
-the recommended cycle (the LTS, else the newest). Unknown slugs get up to 3 suggestions.
+(products with LTS), `lts_eol: true` when that LTS is past its end of life (Laravel 6),
+`next_lts` (`{"version", "from"}` when a cycle becomes LTS later), `maintained` (newest
+first, max 5, past-EOL extended-support cycles excluded) and `eol` of the recommended cycle
+(the LTS if still maintained, else the newest maintained). Unknown slugs get up to 3
+suggestions.
 
 ```json
 {"runtimes": {"nodejs": {"latest": "26.12.1", "lts": "24.22.1", "next_lts": {"version": "26", "from": "2026-10-28"},

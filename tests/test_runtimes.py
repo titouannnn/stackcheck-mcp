@@ -130,6 +130,29 @@ async def test_product_without_lts(fetcher: Fetcher) -> None:
     assert info == {"latest": "3.54.1", "maintained": ["3"]}
 
 
+def test_end_of_life_lts_is_flagged_and_not_recommended() -> None:
+    # Laravel's shape on endoflife.date: its newest LTS (6) is EOL since 2022.
+    laravel: Product = {
+        "name": "laravel",
+        "releases": [
+            {"cycle": "13", "latest": "13.38.0", "released": "2026-03-17", "maintained": True,
+             "eol": "2028-03-17"},
+            {"cycle": "11", "latest": "11.57.0", "released": "2024-03-12", "eol": "2026-03-12"},
+            {"cycle": "6", "latest": "6.20.45", "released": "2019-09-03", "lts": True,
+             "eol": "2022-09-06"},
+        ],
+    }  # fmt: skip
+    assert runtime_info(laravel, TODAY) == {
+        "latest": "13.38.0",
+        "lts": "6.20.45",
+        "lts_eol": True,
+        "maintained": ["13"],
+        "eol": "2028-03-17",
+    }
+    # A dead LTS is never a default target either: the newest maintained cycle is.
+    assert resolve_target("java", laravel, None, TODAY) == "13.38.0"
+
+
 async def test_runtime_infos_partial_failure(fetcher: Fetcher) -> None:
     infos, errors = await runtime_infos(fetcher, ["nodejs", "python", "no such!"], TODAY)
     assert set(infos) == {"nodejs", "python"}

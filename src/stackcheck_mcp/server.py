@@ -88,8 +88,9 @@ def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
     async def get_runtime_info(
         products: Annotated[list[str], Field(description="endoflife.date slugs")],
     ) -> Annotated[CallToolResult, RuntimeResult]:
-        """Latest, LTS, next LTS, maintained cycles and EOL date (of the LTS, else latest
-        cycle) from endoflife.date. Example: {"products": ["nodejs", "python", "eclipse-temurin"]}
+        """Latest, LTS (lts_eol: true if that LTS is end-of-life), next LTS, maintained cycles
+        and EOL date of the recommended cycle, from endoflife.date. Example:
+        {"products": ["nodejs", "python", "eclipse-temurin"]}
         """
         try:
             result = await stack.get_runtime_info(app, products)
