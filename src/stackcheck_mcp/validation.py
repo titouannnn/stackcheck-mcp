@@ -5,14 +5,20 @@
 * npm: ``npm install --package-lock-only --ignore-scripts`` in a fresh temp dir.
 
 User input never reaches a command line: it goes through stdin or a ``package.json``.
-No shell, no install scripts, a timeout on every run.
+No shell, no install scripts, a timeout on every run that kills the whole process tree
+(``npm`` is a ``.cmd`` shim on Windows). Both resolvers use the public registries, like the
+checks themselves, whatever the user's ``.npmrc`` / ``uv.toml`` say.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +30,8 @@ from stackcheck_mcp.models import Issue, ValidationStatus
 log = logging.getLogger(__name__)
 
 MESSAGE_LINES = 15
+NPM_REGISTRY = "https://registry.npmjs.org/"
+PYPI_INDEX = "https://pypi.org/simple"
 _PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)")
 
 
@@ -43,24 +51,52 @@ class Completed:
 async def run(
     command: list[str], *, cwd: Path, time_limit: float, stdin: str | None = None
 ) -> Completed | None:
-    """Run without a shell; ``None`` past ``time_limit`` seconds (the process is killed)."""
+    """Run without a shell; ``None`` past ``time_limit`` seconds (the process tree is killed)."""
+    if sys.platform == "win32":
+        group: dict[str, int | bool] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        group = {"start_new_session": True}  # its own process group, killed as one
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=cwd,
         stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        **group,  # type: ignore[arg-type]
     )
     try:
         out, err = await asyncio.wait_for(
             process.communicate(stdin.encode() if stdin is not None else None), time_limit
         )
     except TimeoutError:
-        process.kill()
-        await process.wait()
+        await _kill_tree(process)
         return None
     returncode = process.returncode if process.returncode is not None else -1
     return Completed(returncode, out.decode(errors="replace"), err.decode(errors="replace"))
+
+
+async def _kill_tree(process: asyncio.subprocess.Process) -> None:
+    """Kill ``process`` and its descendants (killing only the shim would orphan node)."""
+    if sys.platform == "win32":
+        taskkill = shutil.which("taskkill")
+        if taskkill is not None:
+            killer = await asyncio.create_subprocess_exec(
+                taskkill,
+                "/F",
+                "/T",
+                "/PID",
+                str(process.pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(killer.wait(), 10)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, 9)  # SIGKILL to the session's group
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
+    await process.wait()
 
 
 def tail(text: str, lines: int = MESSAGE_LINES) -> str:
@@ -89,6 +125,7 @@ async def validate_pypi(
         return Outcome("unavailable")
     command = [uv, "pip", "compile", "-", "--no-header", "--no-annotate", "--quiet"]
     command += ["--color", "never", "--python-platform", "linux"]
+    command += ["--no-config", "--default-index", PYPI_INDEX]
     if python:
         command += ["--python-version", ".".join(python.split(".")[:2])]
     with tempfile.TemporaryDirectory(prefix="stackcheck-uv-") as tmp:
@@ -140,6 +177,7 @@ async def validate_npm(pins: list[str], time_limit: float) -> Outcome:
     }
     command = [npm, "install", "--package-lock-only", "--ignore-scripts", "--no-audit"]
     command += ["--no-fund", "--no-update-notifier", "--loglevel", "error"]
+    command += ["--registry", NPM_REGISTRY]
     with tempfile.TemporaryDirectory(prefix="stackcheck-npm-") as tmp:
         (Path(tmp) / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
         completed = await run(command, cwd=Path(tmp), time_limit=time_limit)
