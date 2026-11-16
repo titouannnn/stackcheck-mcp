@@ -163,3 +163,38 @@ async def test_http_errors() -> None:
 
     await mock_http(check_headers).get_json("https://registry.example/x")
     assert seen[0].startswith("stackcheck-mcp/")
+
+
+async def test_retry_after_is_honoured(monkeypatch: pytest.MonkeyPatch) -> None:
+    from stackcheck_mcp import http as http_module
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(http_module, "_sleep", fake_sleep)
+    answers = iter(
+        [
+            httpx2.Response(429, headers={"Retry-After": "3"}),
+            httpx2.Response(503),
+            httpx2.Response(200, json={"ok": True}),
+        ]
+    )
+    http = mock_http(lambda r: next(answers), attempts=3)
+    assert await http.get_json("https://registry.example/x") == {"ok": True}
+    assert slept == [3.0, 0.0]  # Retry-After, then the (zero) test backoff
+    # A registry asking for longer than a tool call can wait: fail fast, say why.
+    http = mock_http(lambda r: httpx2.Response(429, headers={"Retry-After": "3600"}))
+    with pytest.raises(FetchError, match=r"HTTP 429 \(retry after 3600s\)"):
+        await http.get_json("https://registry.example/x")
+    assert slept == [3.0, 0.0]
+
+
+def test_retry_after_parsing() -> None:
+    from stackcheck_mcp.http import retry_after
+
+    assert retry_after(None) is None and retry_after("soon") is None
+    assert retry_after(" 7 ") == 7.0
+    assert retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0  # in the past
+    assert (retry_after("Fri, 01 Jan 2100 00:00:00 GMT") or 0) > 50
