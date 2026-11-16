@@ -38,6 +38,9 @@ STARTER_PARENT = "spring-boot-starter-parent"
 JAVA_SCAN = 40  # Spring Boot minor lines inspected, newest first, for a Java `alternative`
 _ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 _PLACEHOLDER = re.compile(r"\$\{([^}]+)\}")
+# Early Apache artifacts were published under build dates (commons-collections 20040616,
+# commons-lang 20030203.000129). Maven orders them above every real version.
+_DATE_VERSION = re.compile(r"^(?:19|20)\d{6}(?:[.-]\d+)*$")
 
 
 class MavenMeta(TypedDict):
@@ -186,10 +189,23 @@ def interpolate(value: str, props: dict[str, str]) -> str:
     return value
 
 
-def pick(meta: MavenMeta, spec: MavenSpec) -> str | None:
+def is_date_version(version: str) -> bool:
+    return _DATE_VERSION.match(version) is not None
+
+
+def pick(meta: MavenMeta, spec: MavenSpec | None = None) -> str | None:
+    """Highest stable version in the user's range.
+
+    Build-date versions are skipped unless the artifact has nothing else or the user's
+    range names one (``20040616``, ``[20040616,)``).
+    """
     versions = meta["versions"]
-    if spec.restrictions:
-        versions = [v for v in versions if in_range(v, list(spec.restrictions))]
+    restrictions = list(spec.restrictions) if spec is not None else []
+    bounds = [b for r in restrictions for b in (r.lower, r.upper) if b]
+    if any(not is_date_version(v) for v in versions) and not any(map(is_date_version, bounds)):
+        versions = [v for v in versions if not is_date_version(v)]
+    if restrictions:
+        versions = [v for v in versions if in_range(v, restrictions)]
     return versions[-1] if versions else None
 
 
@@ -394,7 +410,7 @@ async def _pick(fetcher: Fetcher, spec: MavenSpec, result: EcosystemResult) -> s
                 "ecosystem": "maven",
                 "package": spec.ga,
                 "range": spec.range or "",
-                "message": f"no stable version matches; latest is {meta['versions'][-1]}",
+                "message": f"no stable version matches; latest is {pick(meta)}",
             }
         )
     return version

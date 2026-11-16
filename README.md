@@ -199,6 +199,8 @@ Issue:
 - **Maven**: no alpha/beta/rc/cr/milestone/snapshot/preview/ea qualifiers (`-M1`, `.RC2`,
   `-SNAPSHOT`, `a1`, `b2`, …), ordered with Maven's `ComparableVersion` rules. The
   `<release>` tag of `maven-metadata.xml` is not trusted (it is often a release candidate).
+  Early build-date versions (`commons-collections` `20040616`, which Maven orders above
+  `3.2.2`) are skipped unless the artifact has nothing else or your range names one.
 - Version comparisons are numeric, never lexicographic (`6.0.10 > 6.0.9`).
 - Ranges that cannot be evaluated (`workspace:*`, `npm:` aliases, `file:`, git URLs, dist-tag
   names) never create issues.
