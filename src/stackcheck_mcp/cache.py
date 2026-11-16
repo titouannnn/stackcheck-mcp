@@ -1,6 +1,6 @@
 """On-disk cache of *reduced* registry documents, and the per-call ``Fetcher``.
 
-One JSON file per entry: ``<dir>/v1/<namespace>/<quoted key>.json`` holding
+One JSON file per entry: ``<dir>/<LAYOUT_VERSION>/<namespace>/<quoted key>.json`` holding
 ``{"key", "fetched_at", "data"}``. Writes are atomic (temp file + ``os.replace``) so
 several server processes can share a directory. Per-version documents never change
 upstream and are flagged ``immutable``: they are reused whatever their age.
@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TTL = 21600.0
 # Bump whenever a reduced document's shape changes, so old entries are never misread.
-LAYOUT_VERSION = "v1"
+LAYOUT_VERSION = "v2"
 
 
 @dataclass(frozen=True)

@@ -183,7 +183,7 @@ Issue:
 | `requires` | PyPI `requires_dist` between requested packages (markers evaluated for the target, extras honoured) |
 | `engines` | npm `engines.node` vs the Node target |
 | `python` | `requires_python` vs the Python target |
-| `wheels` | no wheel for the target CPython (`warn` when an sdist exists) |
+| `wheels` | no wheel for the target CPython on Linux x86_64 (`any` / `manylinux*_x86_64` tags; `warn` when an sdist exists) |
 | `bom` | Maven version differs from the one managed by `maven_bom` (`warn`) |
 | `java` | Spring Boot's Java baseline (`java.version` of `spring-boot-starter-parent`) vs the Java target |
 | `deprecated` | npm deprecated version, PyPI project archived/deprecated/quarantined (`warn`) |
@@ -196,7 +196,8 @@ Issue:
 - **npm**: versions matching `^\d+\.\d+\.\d+$` only, never above `dist-tags.latest`
   (unless `latest` is itself a pre-release). Canary/next/experimental tags are ignored.
 - **PyPI**: PEP 440 final releases (no pre/dev). A version whose files are all yanked is
-  used only if nothing else matches, and is always flagged.
+  used only if nothing else matches, and is always flagged. A release without any
+  installable file (all deleted, or eggs only) is ignored.
 - **Maven**: no alpha/beta/rc/cr/milestone/snapshot/preview/ea qualifiers (`-M1`, `.RC2`,
   `-SNAPSHOT`, `a1`, `b2`, …), ordered with Maven's `ComparableVersion` rules. The
   `<release>` tag of `maven-metadata.xml` is not trusted (it is often a release candidate).

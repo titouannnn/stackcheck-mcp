@@ -206,6 +206,17 @@ def test_yanked_detection_requires_all_files() -> None:
     assert version_info(index, "1.1")["yanked"] == "bad build"
 
 
+def test_release_without_files_is_not_a_candidate() -> None:
+    # 1.2 is listed (its files were deleted), 1.3 only ships an egg: nothing to install.
+    files = [
+        {"filename": "demo-1.1-py3-none-any.whl"},
+        {"filename": "demo-1.3-py3.12.egg"},
+    ]
+    index = reduce_simple(simple(files, ["1.1", "1.2", "1.3"]))
+    assert list(index["versions"]) == ["1.1"]
+    assert select(index, parse_spec("demo"))[0] == "1.1"
+
+
 def test_yanked_latest_is_flagged_and_skipped() -> None:
     files = [
         {"filename": "demo-1.0-py3-none-any.whl"},
@@ -234,11 +245,17 @@ def test_yanked_latest_is_flagged_and_skipped() -> None:
     [
         ("x-1.0-py3-none-any.whl", (True, set(), None)),
         ("x-1.0-py2.py3-none-any.whl", (True, set(), None)),
-        ("x-1.0-py3-none-macosx_11_0_arm64.whl", (True, set(), None)),  # ruff-style
+        ("x-1.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", (True, set(), None)),
+        # Other platforms do not count: the checks target CPython on Linux x86_64.
+        ("x-1.0-py3-none-macosx_11_0_arm64.whl", (False, set(), None)),
+        ("x-1.0-cp315-cp315-musllinux_1_2_x86_64.whl", (False, set(), None)),
+        ("x-1.0-cp315-cp315-manylinux_2_17_aarch64.whl", (False, set(), None)),
+        ("x-1.0-cp35-cp35m-manylinux1_x86_64.whl", (False, {5}, None)),
         ("x-1.0-cp39-abi3-manylinux_2_17_x86_64.whl", (False, set(), 9)),
         ("x-1.0-cp315-cp315-manylinux_2_17_x86_64.whl", (False, {15}, None)),
         ("x-1.0-cp315-cp315t-manylinux_2_17_x86_64.whl", (False, set(), None)),  # free-threaded
-        ("x-1.0-cp38-cp38m-win_amd64.whl", (False, {8}, None)),
+        ("x-1.0-cp38-cp38m-win_amd64.whl", (False, set(), None)),
+        ("x-1.0-cp38-cp38m-manylinux2010_x86_64.whl", (False, {8}, None)),
         ("x-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl", (False, set(), None)),
         ("not-a-wheel.whl", (False, set(), None)),
     ],

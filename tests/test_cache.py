@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from stackcheck_mcp.cache import Cache, Fetcher, entry_filename
+from stackcheck_mcp.cache import LAYOUT_VERSION, Cache, Fetcher, entry_filename
 from stackcheck_mcp.http import FetchError, NotFoundError
 from tests.conftest import mock_http
 
@@ -30,20 +30,20 @@ def test_roundtrip_and_ttl(tmp_path: Path) -> None:
     assert entry is not None and entry.data == {"latest": "19.3.1"}
     assert cache.is_fresh(entry)
     assert not Cache(tmp_path, ttl=60).is_fresh(type(entry)(entry.data, time.time() - 61))
-    assert list((tmp_path / "v1" / "npm").glob(".tmp-*")) == []
+    assert list((tmp_path / LAYOUT_VERSION / "npm").glob(".tmp-*")) == []
 
 
 def test_ttl_zero_disables_cache(tmp_path: Path) -> None:
     cache = Cache(tmp_path, ttl=0)
     cache.put("npm", "react", {"x": 1})
     assert cache.get("npm", "react") is None
-    assert not (tmp_path / "v1").exists()
+    assert not (tmp_path / LAYOUT_VERSION).exists()
 
 
 def test_corrupt_or_foreign_entries_are_misses(tmp_path: Path) -> None:
     cache = Cache(tmp_path, ttl=60)
     cache.put("npm", "react", {"x": 1})
-    path = tmp_path / "v1" / "npm" / "react.json"
+    path = tmp_path / LAYOUT_VERSION / "npm" / "react.json"
     path.write_text("{not json", encoding="utf-8")
     assert cache.get("npm", "react") is None
     path.write_text(
@@ -57,7 +57,7 @@ def test_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("STACKCHECK_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("STACKCHECK_CACHE_TTL", "120")
     cache = Cache.from_env()
-    assert cache.ttl == 120 and cache.root == tmp_path / "v1"
+    assert cache.ttl == 120 and cache.root == tmp_path / LAYOUT_VERSION
     monkeypatch.setenv("STACKCHECK_CACHE_TTL", "soon")
     assert Cache.from_env().ttl == 21600
 
@@ -65,7 +65,7 @@ def test_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 async def test_stale_entry_served_on_network_failure(tmp_path: Path) -> None:
     cache = Cache(tmp_path, ttl=60)
     cache.put("npm", "react", {"v": "old"})
-    path = tmp_path / "v1" / "npm" / "react.json"
+    path = tmp_path / LAYOUT_VERSION / "npm" / "react.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["fetched_at"] = "2020-01-01T00:00:00+00:00"
     path.write_text(json.dumps(raw), encoding="utf-8")

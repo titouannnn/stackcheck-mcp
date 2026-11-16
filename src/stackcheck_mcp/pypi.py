@@ -7,9 +7,12 @@ Reduced index (stable versions only; identical per-version entries stored once):
      "meta": [{"rp": ">=3.10", "cp": [10, 11, 12, 13, 14, 15], "abi3": 9,
                "pure": true, "sdist": true, "yanked": "reason"}]}
 
+Wheels are read for the platform every check assumes (markers, ``uv --python-platform
+linux``): CPython on glibc Linux x86_64, i.e. ``any`` and ``manylinux*_x86_64`` tags.
 ``cp`` lists CPython 3 minors with a version-specific (non free-threaded) wheel, ``abi3``
 the lowest minor of a stable-ABI wheel, ``pure`` any ``py3-none-*`` wheel (including
-platform-tagged ones such as ruff's). Per-version dependency metadata
+platform-tagged ones such as ruff's). Releases without any file are dropped (nothing to
+install). Per-version dependency metadata
 (``requires_dist``/``requires_python``) comes from ``/pypi/<name>/<version>/json`` and
 is cached forever: published files never change.
 """
@@ -42,6 +45,7 @@ SIMPLE_JSON = "application/vnd.pypi.simple.v1+json"
 ALTERNATIVE_SCAN = 40  # versions of the constraining package inspected for `alternative`
 _CANONICAL = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _CP = re.compile(r"^cp3(\d+)$")
+_MANYLINUX = re.compile(r"^manylinux(?:1|2010|2014|_\d+_\d+)_x86_64$")
 _SDIST_EXTENSIONS = (".tar.gz", ".zip", ".tar.bz2", ".tar.xz", ".tgz", ".tar")
 
 
@@ -145,14 +149,21 @@ def _file_version(filename: str) -> tuple[str, str, str] | None:
     return None
 
 
+def linux_x86_64(platform: str) -> bool:
+    """Platforms a CPython on glibc Linux x86_64 installs (the checks' target platform)."""
+    return platform == "any" or _MANYLINUX.match(platform) is not None
+
+
 def _wheel_tags(filename: str) -> tuple[bool, set[int], int | None]:
-    """(pure, CPython minors, lowest abi3 minor) for one wheel."""
+    """(pure, CPython minors, lowest abi3 minor) for one wheel, Linux x86_64 tags only."""
     pure, minors, abi3 = False, set[int](), None
     try:
         tags = parse_wheel_filename(filename)[3]
     except InvalidWheelFilename:
         return pure, minors, abi3
     for tag in tags:
+        if not linux_x86_64(tag.platform):
+            continue
         if tag.interpreter.startswith("py3") and tag.abi == "none":
             pure = True
         elif match := _CP.match(tag.interpreter):
@@ -210,7 +221,8 @@ class _Files:
 
 
 def _build_index(name: str, status: str | None, files: dict[str, _Files]) -> PypiIndex:
-    ordered = sorted(files, key=Version)
+    # A release without any installable file (all deleted, or eggs only) is not a candidate.
+    ordered = sorted((v for v in files if files[v].total), key=Version)
     table: list[PypiVersion] = []
     seen: dict[str, int] = {}
     versions: dict[str, int] = {}
