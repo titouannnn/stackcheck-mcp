@@ -23,6 +23,7 @@ IssueKind = Literal[
     "deprecated",
     "yanked",
     "unsatisfiable",  # the user's own constraint matches no stable version
+    "shared",  # requested packages need incompatible versions of an unrequested one
     "resolver",  # a real resolver rejected the set (--resolver-validation)
 ]
 

@@ -10,6 +10,7 @@ in ``meta`` and referenced by index, which keeps ``vite``/``vitest`` at a few KB
 """
 
 import asyncio
+import contextlib
 import json
 import re
 from dataclasses import dataclass
@@ -274,6 +275,62 @@ def check_deprecated(picks: dict[str, Pick]) -> list[Issue]:
     return issues
 
 
+def shared_peers(picks: dict[str, Pick]) -> dict[str, list[tuple[Pick, str]]]:
+    """Required peer ranges on a package nobody requested, declared by two or more picks.
+
+    npm installs one copy of that peer for all of them, so the ranges must intersect.
+    Optional peers are not installed unless requested: they never count here.
+    """
+    found: dict[str, list[tuple[Pick, str]]] = {}
+    for source in picks.values():
+        optional = set(source.info.get("optional", []))
+        for name, spec in source.info.get("peer", {}).items():
+            if name not in picks and name not in optional and is_evaluable(spec):
+                found.setdefault(name, []).append((source, spec))
+    return {name: found[name] for name in sorted(found) if len(found[name]) > 1}
+
+
+def check_shared(shared: dict[str, list[tuple[Pick, str]]], docs: dict[str, NpmDoc]) -> list[Issue]:
+    """``shared`` issues: no stable version of the shared peer satisfies every range."""
+    issues: list[Issue] = []
+    for name, constraints in shared.items():
+        doc = docs.get(name)
+        if doc is None:  # could not be fetched: unknown, never a false conflict
+            continue
+        versions = list(doc["versions"])  # npm may install a peer above `latest`
+        if highest_satisfying(versions, [spec for _, spec in constraints]):
+            continue
+        issue: Issue = {
+            "kind": "shared",
+            "ecosystem": "npm",
+            "package": name,
+            "required_by": ", ".join(source.label for source, _ in constraints),
+            "message": f"no stable {name} satisfies "
+            + " and ".join(f"{source.label} ({spec})" for source, spec in constraints),
+        }
+        if alternative := _shared_alternative(name, constraints, versions):
+            issue["alternative"] = alternative
+        issues.append(issue)
+    return issues
+
+
+def _shared_alternative(
+    name: str, constraints: list[tuple[Pick, str]], versions: list[str]
+) -> dict[str, str] | None:
+    """Highest version of one constraining pick whose peer range (if any) on ``name``
+    leaves a stable version that satisfies everyone else."""
+    for source, _ in constraints:
+        others = [spec for other, spec in constraints if other is not source]
+        for version in reversed(candidates(source.doc)):
+            if version == source.version or (source.range and not satisfies(version, source.range)):
+                continue
+            own = version_info(source.doc, version).get("peer", {}).get(name)
+            ranges = others + ([own] if own is not None and is_evaluable(own) else [])
+            if highest_satisfying(versions, ranges):
+                return {source.name: version}
+    return None
+
+
 def decide(
     specs: list[NpmSpec], docs: dict[str, NpmDoc], node: str | None
 ) -> tuple[dict[str, Pick], list[Issue], dict[str, str]]:
@@ -346,6 +403,15 @@ async def check_npm(fetcher: Fetcher, raw_specs: list[str], node: str | None) ->
     await asyncio.gather(*(load(spec) for spec in specs))
     found = [spec for spec in specs if spec.name in docs]
     picks, issues, errors = decide(found, docs, node)
+    shared = shared_peers(picks)
+    shared_docs: dict[str, NpmDoc] = {}
+
+    async def load_shared(name: str) -> None:
+        with contextlib.suppress(FetchError, ValueError):
+            shared_docs[name] = await fetch_doc(fetcher, name)
+
+    await asyncio.gather(*(load_shared(name) for name in shared))
+    issues += check_shared(shared, shared_docs)
     result.errors.update(errors)
     result.picks = {name: item.version for name, item in picks.items()}
     result.issues = issues

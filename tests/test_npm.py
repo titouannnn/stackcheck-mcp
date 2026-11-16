@@ -10,11 +10,13 @@ from stackcheck_mcp.npm import (
     NpmSpec,
     candidates,
     check_npm,
+    check_shared,
     decide,
     fetch_doc,
     parse_spec,
     pick,
     reduce_doc,
+    shared_peers,
 )
 from stackcheck_mcp.semver_utils import is_evaluable, satisfies, sort_versions
 from tests.conftest import mock_http
@@ -339,4 +341,76 @@ async def test_unpublished_package_is_reported_as_such() -> None:
     http = mock_http(handler)
     result = await check_npm(Fetcher(http, Cache(None)), ["contenthook"], None)
     assert result.errors == {"contenthook": "unpublished"}
+    await http.aclose()
+
+
+# ----------------------------------------------------------------- shared peers
+
+
+SHARED_DOCS = {
+    "config": doc(
+        {
+            "1.0.0": {"peerDependencies": {"eslint": "^8"}},
+            "2.0.0": {"peerDependencies": {"eslint": "^8"}},
+        }
+    ),
+    "plugin": doc(
+        {
+            "1.0.0": {"peerDependencies": {"eslint": "^8 || ^9"}},
+            "2.0.0": {"peerDependencies": {"eslint": ">=9"}},
+        }
+    ),
+    "helper": doc(
+        {
+            "1.0.0": {
+                "peerDependencies": {"eslint": "*", "ts": "^5", "react": "^19"},
+                "peerDependenciesMeta": {"ts": {"optional": True}},
+            }
+        }
+    ),
+    "react": doc({"19.0.0": {}}),
+}
+
+
+def test_shared_required_peer_conflict() -> None:
+    specs = [NpmSpec("config"), NpmSpec("plugin"), NpmSpec("helper"), NpmSpec("react")]
+    picks, issues, _ = decide(specs, SHARED_DOCS, None)
+    assert issues == []  # no requested package constrains another one
+    shared = shared_peers(picks)
+    # react is requested (a peer issue, if any); ts is optional and not requested.
+    assert list(shared) == ["eslint"]
+    eslint = doc({"8.57.1": {}, "9.39.0": {}})
+    assert check_shared(shared, {"eslint": eslint}) == [
+        {
+            "kind": "shared",
+            "ecosystem": "npm",
+            "package": "eslint",
+            "required_by": "config@2.0.0, plugin@2.0.0, helper@1.0.0",
+            "message": "no stable eslint satisfies config@2.0.0 (^8) and "
+            "plugin@2.0.0 (>=9) and helper@1.0.0 (*)",
+            "alternative": {"plugin": "1.0.0"},  # config has no version without ^8
+        }
+    ]
+    assert check_shared(shared, {}) == []  # unknown: never a false conflict
+    compatible = shared_peers(
+        decide([NpmSpec("plugin", "1.0.0"), NpmSpec("config")], SHARED_DOCS, None)[0]
+    )
+    assert check_shared(compatible, {"eslint": eslint}) == []
+
+
+async def test_shared_peer_is_fetched_and_checked() -> None:
+    raw = {
+        "config": {"versions": {"1.0.0": {"peerDependencies": {"eslint": "^8"}}}},
+        "plugin": {"versions": {"1.0.0": {"peerDependencies": {"eslint": ">=9"}}}},
+        "eslint": {"versions": {"8.57.1": {}, "9.39.0": {}}},
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        name = request.url.path.strip("/")
+        return httpx2.Response(200, content=json.dumps({"name": name, **raw[name]}))
+
+    http = mock_http(handler)
+    result = await check_npm(Fetcher(http, Cache(None)), ["config", "plugin"], None)
+    assert [(i["kind"], i["package"]) for i in result.issues] == [("shared", "eslint")]
+    assert "eslint" not in result.picks  # not requested: never answered
     await http.aclose()

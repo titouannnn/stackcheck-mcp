@@ -18,9 +18,11 @@ is cached forever: published files never change.
 """
 
 import asyncio
+import contextlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -558,11 +560,10 @@ async def fetch_meta(fetcher: Fetcher, name: str, version: str) -> PypiMeta:
     )
 
 
-async def find_alternative(
-    fetcher: Fetcher, request: AlternativeRequest, env: dict[str, str]
+async def _older_version(
+    fetcher: Fetcher, source: Pick, accept: Callable[[PypiMeta], bool]
 ) -> str | None:
-    """Highest stable version of the constraining package that accepts the constrained pick."""
-    source, constrained = request.source, request.constrained
+    """Highest other stable, non-yanked version of ``source`` whose metadata ``accept``s."""
     versions = [
         v
         for v in reversed(candidates(source.index, source.spec.specifier))
@@ -574,11 +575,112 @@ async def find_alternative(
             *(fetch_meta(fetcher, source.name, v) for v in batch), return_exceptions=True
         )
         for version, meta in zip(batch, metas, strict=True):
-            if isinstance(meta, BaseException):
-                continue
-            specs = requirements_on(meta, constrained.name, env, source.spec.extras)
-            if specs and all(s.contains(constrained.version, prereleases=True) for s in specs):
+            if not isinstance(meta, BaseException) and accept(meta):
                 return version
+    return None
+
+
+async def find_alternative(
+    fetcher: Fetcher, request: AlternativeRequest, env: dict[str, str]
+) -> str | None:
+    """Highest stable version of the constraining package that accepts the constrained pick."""
+    source, constrained = request.source, request.constrained
+
+    def accept(meta: PypiMeta) -> bool:
+        specs = requirements_on(meta, constrained.name, env, source.spec.extras)
+        return bool(specs) and all(s.contains(constrained.version, prereleases=True) for s in specs)
+
+    return await _older_version(fetcher, source, accept)
+
+
+# --------------------------------------------------------------------------- shared deps
+
+# Only these operators can make two requirements incompatible: lower bounds alone always
+# meet at the newest release, so they never cost an extra index fetch.
+_BOUNDING = frozenset({"<", "<=", "==", "~=", "==="})
+
+
+def shared_requirements(
+    picks: dict[str, Pick], metas: dict[str, PypiMeta], env: dict[str, str]
+) -> dict[str, list[tuple[Pick, SpecifierSet]]]:
+    """Requirements on a project nobody requested, declared by two or more picks.
+
+    The installer keeps one version of it, so the specifiers must intersect. Lines of one
+    pick that apply together (several markers) are merged into one specifier.
+    """
+    found: dict[str, dict[str, tuple[Pick, SpecifierSet]]] = {}
+    for source in picks.values():
+        meta = metas.get(source.name)
+        if meta is None:
+            continue
+        for line in meta["requires_dist"]:
+            try:
+                req = Requirement(line)
+            except InvalidRequirement:
+                continue
+            name = canonicalize_name(req.name)
+            if name in picks or not marker_applies(req.marker, env, source.spec.extras):
+                continue
+            by_source = found.setdefault(name, {})
+            previous = by_source.get(source.name, (source, SpecifierSet()))[1]
+            by_source[source.name] = (source, previous & req.specifier)
+    return {
+        name: list(by_source.values())
+        for name, by_source in sorted(found.items())
+        if len(by_source) > 1
+        and any(s.operator in _BOUNDING for _, spec in by_source.values() for s in spec)
+    }
+
+
+def satisfiable(index: PypiIndex, specs: list[SpecifierSet]) -> bool:
+    """Some stable, non-yanked version is inside every specifier."""
+    return any(
+        "yanked" not in version_info(index, version)
+        and all(spec.contains(version, prereleases=True) for spec in specs)
+        for version in index["versions"]
+    )
+
+
+def check_shared(
+    shared: dict[str, list[tuple[Pick, SpecifierSet]]], indexes: dict[str, PypiIndex]
+) -> list[tuple[Issue, str]]:
+    """``shared`` issues (with the shared project's name) when no version fits everyone."""
+    issues: list[tuple[Issue, str]] = []
+    for name, constraints in shared.items():
+        index = indexes.get(name)
+        if index is None or satisfiable(index, [spec for _, spec in constraints]):
+            continue  # unknown is never a conflict
+        issue: Issue = {
+            "kind": "shared",
+            "ecosystem": "pypi",
+            "package": name,
+            "required_by": ", ".join(source.label for source, _ in constraints),
+            "message": f"no stable {name} satisfies "
+            + " and ".join(f"{source.label} ({spec or 'any'})" for source, spec in constraints),
+        }
+        issues.append((issue, name))
+    return issues
+
+
+async def find_shared_alternative(
+    fetcher: Fetcher,
+    constraints: list[tuple[Pick, SpecifierSet]],
+    index: PypiIndex,
+    env: dict[str, str],
+) -> dict[str, str] | None:
+    """Highest version of one constraining pick that lets the shared project resolve."""
+    name = index["name"]
+    for source, _ in constraints:
+        others = [spec for other, spec in constraints if other is not source]
+
+        def accept(
+            meta: PypiMeta, source: Pick = source, others: list[SpecifierSet] = others
+        ) -> bool:
+            own = requirements_on(meta, name, env, source.spec.extras)
+            return satisfiable(index, others + own)
+
+        if version := await _older_version(fetcher, source, accept):
+            return {source.name: version}
     return None
 
 
@@ -655,10 +757,30 @@ async def check_pypi(fetcher: Fetcher, raw_specs: list[str], python: str | None)
         result.issues += python_issues + check_wheels(picks, python, failed)
     result.issues += check_status(picks)
 
+    shared = shared_requirements(picks, metas, env)
+    shared_indexes: dict[str, PypiIndex] = {}
+
+    async def load_shared(name: str) -> None:
+        with contextlib.suppress(FetchError, ValueError):
+            shared_indexes[name] = await fetch_index(fetcher, validate_name(name))
+
+    await asyncio.gather(*(load_shared(name) for name in shared))
+    shared_issues = check_shared(shared, shared_indexes)
+    result.issues += [issue for issue, _ in shared_issues]
+
     alternatives = await asyncio.gather(*(find_alternative(fetcher, r, env) for r in pending))
     for request, alternative in zip(pending, alternatives, strict=True):
         if alternative:
             request.issue["alternative"] = {request.source.name: alternative}
+    shared_alternatives = await asyncio.gather(
+        *(
+            find_shared_alternative(fetcher, shared[name], shared_indexes[name], env)
+            for _, name in shared_issues
+        )
+    )
+    for (issue, _), found in zip(shared_issues, shared_alternatives, strict=True):
+        if found:
+            issue["alternative"] = found
 
     result.picks = {name: item.version for name, item in picks.items()}
     result.pins = [item.spec.pin(item.version) for item in picks.values()]

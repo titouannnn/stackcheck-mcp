@@ -11,6 +11,7 @@ from stackcheck_mcp.pypi import (
     PypiIndex,
     _wheel_tags,
     check_pypi,
+    check_shared,
     check_wheels,
     fetch_index,
     marker_env,
@@ -19,6 +20,7 @@ from stackcheck_mcp.pypi import (
     reduce_simple,
     requirements_on,
     select,
+    shared_requirements,
     version_info,
     wheel_ok,
 )
@@ -364,3 +366,73 @@ def test_project_status_is_flagged() -> None:
         **{"project-status": {"status": "active"}},
     )
     assert "status" not in reduce_simple(active)
+
+
+# ----------------------------------------------------------------- shared dependencies
+
+
+def project(name: str, versions: list[str]) -> PypiIndex:
+    files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions]
+    return reduce_simple({**simple(files, versions), "name": name})
+
+
+def test_shared_requirements_and_conflict() -> None:
+    picks = {
+        "a": Pick(parse_spec("a"), "2.0", project("a", ["2.0"])),
+        "b": Pick(parse_spec("b[x]"), "1.0", project("b", ["1.0"])),
+    }
+    metas: dict[str, Any] = {
+        "a": {"requires_dist": ["c<2", "c>=1; python_version >= '3.10'", "d>=1", "b"]},
+        "b": {"requires_dist": ["c>=2; extra == 'x'", "d>=2", "e<3; sys_platform == 'win32'"]},
+    }
+    shared = shared_requirements(picks, metas, marker_env(PY315))
+    # d: lower bounds only (always meet at the newest release); e: marker off; b: requested.
+    assert {name: [(p.name, str(s)) for p, s in c] for name, c in shared.items()} == {
+        "c": [("a", "<2,>=1"), ("b", ">=2")]
+    }
+    issues = check_shared(shared, {"c": project("c", ["1.5", "2.1"])})
+    assert issues == [
+        (
+            {
+                "kind": "shared",
+                "ecosystem": "pypi",
+                "package": "c",
+                "required_by": "a==2.0, b==1.0",
+                "message": "no stable c satisfies a==2.0 (<2,>=1) and b==1.0 (>=2)",
+            },
+            "c",
+        )
+    ]
+    assert check_shared(shared, {"c": project("c", ["1.5", "2.0", "1.9"])}) == [
+        (issues[0][0], "c")
+    ]  # 2.0 is not <2
+    assert check_shared(shared, {}) == []  # unknown: never a false conflict
+
+
+async def test_shared_conflict_end_to_end_with_alternative() -> None:
+    requires = {"a/2.0": ["c<2"], "a/1.0": ["c>=1"], "b/1.0": ["c>=2"]}
+    versions = {"a": ["1.0", "2.0"], "b": ["1.0"], "c": ["1.0", "2.0"]}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        parts = request.url.path.strip("/").split("/")
+        if parts[0] == "simple":
+            name = parts[1]
+            files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions[name]]
+            return httpx2.Response(200, json={**simple(files, versions[name]), "name": name})
+        info = {"requires_dist": requires[f"{parts[1]}/{parts[2]}"], "requires_python": None}
+        return httpx2.Response(200, json={"info": info})
+
+    http = mock_http(handler)
+    result = await check_pypi(Fetcher(http, Cache(None)), ["a", "b"], PY315)
+    assert result.picks == {"a": "2.0", "b": "1.0"}
+    assert result.issues == [
+        {
+            "kind": "shared",
+            "ecosystem": "pypi",
+            "package": "c",
+            "required_by": "a==2.0, b==1.0",
+            "message": "no stable c satisfies a==2.0 (<2) and b==1.0 (>=2)",
+            "alternative": {"a": "1.0"},
+        }
+    ]
+    await http.aclose()

@@ -171,16 +171,22 @@ Issue:
 | `range` | the declared constraint |
 | `target` | the runtime target checked (`node 24.22.1`, `python 3.15.2`, `java 21.0.13+9`) |
 | `suggestion` | another version of the flagged package: the highest stable one that fixes the issue (satisfies every constraint the other requested packages, the target or the BOM put on it, and your own range). `resolver` issues: uv's own choices |
-| `alternative` | only when there is no suggestion (`peer`, `requires`): highest stable version of the `required_by` package that accepts the picked one |
+| `alternative` | only when there is no suggestion (`peer`, `requires`, `shared`): highest stable version of a `required_by` package that accepts the picked one (or, for `shared`, lets the dependency resolve) |
 | `severity` | `"warn"`; absent means error |
 | `message` | resolver output, deprecation or yank reason, … |
 
 `suggestion` and `alternative` are indicative only. The primary answer never moves.
 
+**Scope.** Issues cover the constraints between the packages you request, and those that
+two of them put on a dependency they share (one level deep). A conflict further down the
+dependency tree is only caught by `--resolver-validation`: no issue does not guarantee that
+the set installs.
+
 | Kind | Meaning |
 |---|---|
 | `peer` | npm `peerDependencies` between requested packages (optional peers count when requested) |
 | `requires` | PyPI `requires_dist` between requested packages (markers evaluated for the target, extras honoured) |
+| `shared` | two or more requested packages need incompatible versions of a package you did not request (npm required peers, PyPI `requires_dist`); `package` is that dependency, `required_by` lists them |
 | `engines` | npm `engines.node` vs the Node target |
 | `python` | `requires_python` vs the Python target |
 | `wheels` | no wheel for the target CPython on Linux x86_64 (`any` / `manylinux*_x86_64` tags; `warn` when an sdist exists) |
@@ -253,9 +259,10 @@ uv run python scripts/record_fixtures.py   # refresh tests/fixtures/cache from t
 uv run python scripts/reference_run.py     # reference stack, live, with timings
 ```
 
-The differential tests are the main correctness guarantee. Every set `check_stack` calls
-issue-free must resolve with `uv pip compile` / `npm install --package-lock-only`, and every
-`peer`/`requires` conflict it reports must be rejected by them. See [AGENTS.md](AGENTS.md)
+The differential tests are the main correctness guarantee. For each stack they cover, a set
+`check_stack` calls issue-free must resolve with `uv pip compile` / `npm install
+--package-lock-only`, and every `peer`/`requires`/`shared` conflict it reports must be
+rejected by them. See [AGENTS.md](AGENTS.md)
 for the project's invariants and [docs/PLAN.md](docs/PLAN.md) for verified facts and
 deviations from the original spec.
 

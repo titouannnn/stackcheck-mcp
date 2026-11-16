@@ -66,8 +66,8 @@ def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
             ),
         ],
     ) -> Annotated[CallToolResult, StackResult]:
-        """Latest stable versions plus every incompatibility between the packages (peer deps,
-        requires_dist, engines, requires_python, wheels, BOM), with indicative fixes. Example:
+        """Latest stable versions plus incompatibilities between the packages and their shared
+        deps (peer deps, requires_dist, engines, requires_python, wheels, BOM). Example:
         {"npm": ["react", "typescript", "typescript-eslint", "vite@^8"], "pypi": ["fastapi"]}
         """
         try:
