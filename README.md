@@ -58,6 +58,7 @@ Only `uv` is needed. Public registries only, no credentials.
 | `--host`, `--port` | `127.0.0.1`, `8000` | HTTP bind address |
 | `--resolver-validation` | off | also check the picks with real resolvers (see below) |
 | `--resolver-timeout` | `120` | seconds per resolver run |
+| `--call-timeout` | `45` | seconds of registry work per tool call; past it, the answer is partial and the slow parts are in `errors` (fetches keep warming the cache) |
 | `--log-level` | `WARNING` | logs go to stderr (stdout is the stdio transport) |
 
 | Environment | Default | |
@@ -81,7 +82,8 @@ Only `uv` is needed. Public registries only, no credentials.
 }
 ```
 
-All fields are optional, but at least one list is required.
+All fields are optional, but at least one list is required. Each list takes at most 100
+entries.
 
 - npm: `name` or `name@range` (`@types/react@^19`: the range follows the last `@`).
   `name@latest` means the latest stable; other dist-tags (`next`, `canary`, …) are rejected.

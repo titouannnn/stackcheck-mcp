@@ -28,6 +28,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--resolver-timeout", type=float, default=120.0, help="seconds per resolver run"
     )
+    parser.add_argument(
+        "--call-timeout",
+        type=float,
+        default=45.0,
+        help="seconds of registry work per tool call before a partial answer",
+    )
     parser.add_argument("--log-level", default="WARNING", type=str.upper, choices=LEVELS)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser.parse_args(argv)
@@ -40,7 +46,9 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr, level=args.log_level, format="%(levelname)s %(name)s: %(message)s"
     )
     settings = Settings(
-        resolver_validation=args.resolver_validation, resolver_timeout=args.resolver_timeout
+        resolver_validation=args.resolver_validation,
+        resolver_timeout=args.resolver_timeout,
+        call_timeout=args.call_timeout,
     )
     server = build_server(App(settings), log_level=cast(LogLevel, args.log_level))
     if args.http:
