@@ -70,6 +70,7 @@ class StackResult(TypedDict):
     runtimes: NotRequired[dict[str, RuntimeInfo]]
     issues: NotRequired[list[Issue]]
     errors: NotRequired[dict[str, dict[str, str]]]
+    warnings: NotRequired[dict[str, dict[str, str]]]  # {"targets": {kind: why}}
     validation: NotRequired[dict[str, ValidationStatus]]
     stale: NotRequired[bool]
 

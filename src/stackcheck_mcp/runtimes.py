@@ -211,6 +211,22 @@ def resolve_target(kind: str, product: Product, spec: str | None, today: date) -
     raise ValueError(f"unknown {kind} version {spec!r} (known cycles: {known})")
 
 
+def eol_warning(product: Product, version: str, today: date) -> str | None:
+    """Why a resolved target is a poor choice: its cycle is past its end of life."""
+    cycles = [
+        r
+        for r in product["releases"]
+        if version == r["cycle"] or version.startswith(r["cycle"] + ".")
+    ]
+    if not cycles:
+        return None
+    release = max(cycles, key=lambda r: len(r["cycle"]))
+    eol = _date(release.get("eol"))
+    if eol is None or eol > today:
+        return None
+    return f"{release['cycle']} is end-of-life since {eol.isoformat()}"
+
+
 def levenshtein(a: str, b: str) -> int:
     previous = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
@@ -295,10 +311,14 @@ async def runtime_infos(
 
 async def resolve_targets(
     fetcher: Fetcher, wanted: dict[str, str | None], today: date
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve ``{"node": "24" | None, ...}`` to full versions; errors keyed by target."""
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Resolve ``{"node": "24" | None, ...}`` to full versions.
+
+    Also returns errors and warnings (end-of-life cycle asked for), keyed by target.
+    """
     resolved: dict[str, str] = {}
     errors: dict[str, str] = {}
+    warnings: dict[str, str] = {}
 
     async def one(kind: str, spec: str | None) -> None:
         try:
@@ -306,6 +326,9 @@ async def resolve_targets(
             resolved[kind] = resolve_target(kind, product, spec, today)
         except (ValueError, FetchError) as exc:
             errors[kind] = str(exc)
+            return
+        if warning := eol_warning(product, resolved[kind], today):
+            warnings[kind] = warning
 
     await asyncio.gather(*(one(kind, spec) for kind, spec in wanted.items()))
-    return {k: resolved[k] for k in TARGET_SLUGS if k in resolved}, errors
+    return {k: resolved[k] for k in TARGET_SLUGS if k in resolved}, errors, warnings

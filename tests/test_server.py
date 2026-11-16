@@ -139,6 +139,7 @@ async def test_targets_and_partial_errors() -> None:
     assert result["targets"] == {"node": "18.20.8", "python": "3.9.25"}
     assert {i["kind"] for i in result["issues"]} == {"engines", "python"}
     assert result["errors"]["targets"] == {"ruby": "unknown target (use node, python, java)"}
+    assert set(result["warnings"]["targets"]) == {"node", "python"}  # both cycles are EOL
     # Not in the fixtures and the network is off: reported, not fatal.
     assert "no-such-pkg-zzz" in result["errors"]["npm"]
     assert result["npm"] == {"vite": "8.3.5"}

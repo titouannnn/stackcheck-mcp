@@ -167,6 +167,7 @@ Every empty field is omitted: no `null`, `[]` or `{}`. The tools also publish an
 | `runtimes` | `{slug: runtime info}` as in `get_runtime_info` |
 | `issues` | list of issues (below) |
 | `errors` | `{"npm"\|"pypi"\|"maven"\|"runtimes"\|"targets": {item: message}}`. One failure never fails the call |
+| `warnings` | `{"targets": {"node"\|"python"\|"java": message}}` when a target you asked for is end-of-life (`"3.9 is end-of-life since 2025-10-31"`) |
 | `validation` | `{"npm"\|"pypi": "skipped"\|"ok"\|"failed"\|"unavailable"\|"timeout"}` |
 | `stale` | `true` when some data came from an expired cache entry because a registry was unreachable |
 

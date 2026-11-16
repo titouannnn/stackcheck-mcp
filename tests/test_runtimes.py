@@ -160,11 +160,18 @@ async def test_runtime_infos_partial_failure(fetcher: Fetcher) -> None:
 
 
 async def test_resolve_targets(fetcher: Fetcher) -> None:
-    resolved, errors = await resolve_targets(
+    resolved, errors, warnings = await resolve_targets(
         fetcher, {"node": None, "python": "3.14", "java": "1"}, TODAY
     )
     assert resolved == {"node": "24.22.1", "python": "3.14.10"}
     assert "unknown java version" in errors["java"]
+    assert warnings == {}  # defaults and 3.14 are maintained
+    resolved, errors, warnings = await resolve_targets(
+        fetcher, {"node": "18", "python": "3.9.1"}, TODAY
+    )
+    assert set(resolved) == {"node", "python"} and errors == {}
+    assert warnings["node"] == "18 is end-of-life since 2025-04-30"
+    assert warnings["python"].startswith("3.9 is end-of-life since 2025-")
 
 
 def test_suggest_slugs() -> None:

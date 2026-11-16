@@ -196,9 +196,10 @@ async def check_stack(
     prefetch = asyncio.gather(*_prefetch(fetcher, npm_specs, pypi_specs, maven_specs))
     try:
         async with asyncio.timeout_at(deadline):
-            resolved, target_errors = await asyncio.shield(targets_task)
+            resolved, target_errors, target_warnings = await asyncio.shield(targets_task)
     except TimeoutError:
         resolved, target_errors = {}, {kind: _timed_out(seconds) for kind in wanted}
+        target_warnings = {}
     if target_errors:
         errors.setdefault("targets", {}).update(target_errors)
 
@@ -255,6 +256,8 @@ async def check_stack(
         out["issues"] = issues
     if errors:
         out["errors"] = errors
+    if target_warnings:
+        out["warnings"] = {"targets": target_warnings}
     if statuses:
         out["validation"] = statuses
     if fetcher.stale:
