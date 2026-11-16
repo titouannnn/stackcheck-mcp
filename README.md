@@ -243,6 +243,8 @@ Central `maven-metadata.xml` and POMs, and endoflife.date API v1. Only **reduced
 cached (a few KB per package; `typescript`'s 8.7 MB document becomes 2 KB). Per-version data
 (PyPI metadata, POMs) never expires. Writes are atomic and safe across processes. When a
 registry is unreachable, expired entries are served and the answer says `"stale": true`.
+A "not found" answer is reused for 15 minutes (at most the TTL), so a misspelled package
+is not looked up again on every call while a new publish still shows up quickly.
 
 Measured for the reference stack: cold (empty cache) 1.6 s, warm 60–80 ms.
 

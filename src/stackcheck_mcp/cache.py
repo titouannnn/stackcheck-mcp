@@ -28,6 +28,9 @@ from stackcheck_mcp.http import FetchError, HttpClient, NotFoundError
 log = logging.getLogger(__name__)
 
 DEFAULT_TTL = 21600.0
+# How long a "not found" answer is reused: short, so a fresh publish shows up soon.
+NOT_FOUND_TTL = 900.0
+_MISSING = "$missing"  # data of a remembered 404 (no reduced document has this key)
 # Bump whenever a reduced document's shape changes, so old entries are never misread.
 LAYOUT_VERSION = "v2"
 
@@ -89,8 +92,8 @@ class Cache:
             log.debug("ignoring unreadable cache entry %s: %s", path, exc)
             return None
 
-    def is_fresh(self, entry: CacheEntry) -> bool:
-        return time.time() - entry.fetched_at < self.ttl
+    def is_fresh(self, entry: CacheEntry, ttl: float | None = None) -> bool:
+        return time.time() - entry.fetched_at < (self.ttl if ttl is None else ttl)
 
     def put(self, namespace: str, key: str, data: Any) -> None:
         if not self.enabled:
@@ -155,11 +158,16 @@ class Fetcher:
         immutable: bool,
     ) -> Any:
         entry = self.cache.get(namespace, key)
+        if entry is not None and _missing(entry.data) is not None:
+            if self.cache.is_fresh(entry, min(self.cache.ttl, NOT_FOUND_TTL)):
+                raise NotFoundError(_missing(entry.data))
+            entry = None  # an expired "not found" is never served as stale data
         if entry is not None and (immutable or self.cache.is_fresh(entry)):
             return entry.data
         try:
             data = await load()
-        except NotFoundError:
+        except NotFoundError as exc:
+            self.cache.put(namespace, key, {_MISSING: str(exc)})
             raise
         except FetchError as exc:
             if entry is None:
@@ -169,3 +177,10 @@ class Fetcher:
             return entry.data
         self.cache.put(namespace, key, data)
         return data
+
+
+def _missing(data: Any) -> str | None:
+    """The message of a remembered 404, if ``data`` is one."""
+    if isinstance(data, dict) and isinstance(data.get(_MISSING), str):
+        return str(data[_MISSING])
+    return None

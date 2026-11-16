@@ -133,6 +133,48 @@ async def test_not_found_is_not_masked_by_stale(tmp_path: Path) -> None:
     await http.aclose()
 
 
+async def test_not_found_is_remembered_briefly(tmp_path: Path) -> None:
+    cache = Cache(tmp_path, ttl=3600)
+    calls = 0
+
+    async def load() -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise NotFoundError("unpublished")
+        return {"v": 2}
+
+    for _ in range(2):  # a typo in a stack is not looked up again on every call
+        with pytest.raises(NotFoundError, match="unpublished"):
+            await Fetcher(mock_http(lambda r: httpx2.Response(500)), cache).cached(
+                "npm", "new-pkg", load, immutable=True
+            )
+    assert calls == 1
+    # Past NOT_FOUND_TTL (15 min), even for immutable data: a fresh publish shows up.
+    path = cache._path("npm", "new-pkg")
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    entry["fetched_at"] = "2020-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(entry), encoding="utf-8")
+    fetcher = Fetcher(mock_http(lambda r: httpx2.Response(500)), cache)
+    assert await fetcher.cached("npm", "new-pkg", load, immutable=True) == {"v": 2}
+    assert calls == 2 and not fetcher.stale
+
+
+async def test_expired_not_found_is_not_served_as_stale(tmp_path: Path) -> None:
+    cache = Cache(tmp_path, ttl=3600)
+    cache.put("npm", "x", {"$missing": "not found"})
+    path = cache._path("npm", "x")
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    entry["fetched_at"] = "2020-01-01T00:00:00+00:00"
+    path.write_text(json.dumps(entry), encoding="utf-8")
+
+    async def load() -> object:
+        raise FetchError("HTTP 503")
+
+    with pytest.raises(FetchError, match="HTTP 503"):
+        await Fetcher(mock_http(lambda r: httpx2.Response(500)), cache).cached("npm", "x", load)
+
+
 async def test_concurrent_identical_loads_are_deduplicated(tmp_path: Path) -> None:
 
     calls = 0
