@@ -368,8 +368,8 @@ def decide(
 
 async def fetch_doc(fetcher: Fetcher, name: str) -> NpmDoc:
     async def load() -> NpmDoc:
-        raw = await fetcher.http.get_json(package_url(name), headers={"Accept": ABBREVIATED})
-        return reduce_doc(raw)
+        url = package_url(name)
+        return await fetcher.http.get_json(url, {"Accept": ABBREVIATED}, reduce_doc)
 
     return cast(NpmDoc, await fetcher.cached("npm", name, load))
 

@@ -539,14 +539,13 @@ def check_status(picks: dict[str, Pick]) -> list[Issue]:
 async def fetch_index(fetcher: Fetcher, name: str) -> PypiIndex:
     async def load() -> PypiIndex:
         try:
-            raw = await fetcher.http.get_json(
-                f"{PYPI}/simple/{name}/", headers={"Accept": SIMPLE_JSON}
-            )
-            return reduce_simple(raw)
+            simple = f"{PYPI}/simple/{name}/"
+            return await fetcher.http.get_json(simple, {"Accept": SIMPLE_JSON}, reduce_simple)
         except NotFoundError:
             raise
         except FetchError:
-            return reduce_json_project(await fetcher.http.get_json(f"{PYPI}/pypi/{name}/json"))
+            legacy = f"{PYPI}/pypi/{name}/json"
+            return await fetcher.http.get_json(legacy, None, reduce_json_project)
 
     return cast(PypiIndex, await fetcher.cached("pypi", name, load))
 

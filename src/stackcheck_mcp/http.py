@@ -6,9 +6,10 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, TypeVar, overload
 
 import httpx2
 
@@ -18,6 +19,9 @@ log = logging.getLogger(__name__)
 
 USER_AGENT = f"stackcheck-mcp/{__version__}"
 TRANSIENT_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+# Bodies larger than this are parsed (and reduced) in a worker thread: typescript's npm
+# document is 8.8 MB and takes ~250 ms, which would stall every other request.
+THREAD_THRESHOLD = 256 * 1024
 MAX_RETRY_AFTER = 10.0  # a longer wait than this would outlast the tool call: give up
 
 
@@ -39,6 +43,17 @@ def retry_after(value: str | None) -> float | None:
 
 async def _sleep(seconds: float) -> None:  # patched by tests
     await asyncio.sleep(seconds)
+
+
+T = TypeVar("T")
+
+
+def _decode(body: bytes, transform: Callable[[Any], Any] | None) -> Any:
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        raise FetchError("invalid JSON response") from exc
+    return transform(data) if transform is not None else data
 
 
 class FetchError(Exception):
@@ -100,12 +115,25 @@ class HttpClient:
             return response.content
         raise FetchError(last_error)
 
-    async def get_json(self, url: str, headers: dict[str, str] | None = None) -> Any:
+    @overload
+    async def get_json(self, url: str, headers: dict[str, str] | None = None) -> Any: ...
+
+    @overload
+    async def get_json(
+        self, url: str, headers: dict[str, str] | None, transform: Callable[[Any], T]
+    ) -> T: ...
+
+    async def get_json(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        transform: Callable[[Any], Any] | None = None,
+    ) -> Any:
+        """Parsed JSON, passed through ``transform`` (a reducer) if given."""
         body = await self.get_bytes(url, headers)
-        try:
-            return json.loads(body)
-        except ValueError as exc:
-            raise FetchError("invalid JSON response") from exc
+        if len(body) > THREAD_THRESHOLD:
+            return await asyncio.to_thread(_decode, body, transform)
+        return _decode(body, transform)
 
     async def get_text(self, url: str, headers: dict[str, str] | None = None) -> str:
         body = await self.get_bytes(url, headers)

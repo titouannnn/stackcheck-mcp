@@ -240,3 +240,25 @@ def test_retry_after_parsing() -> None:
     assert retry_after(" 7 ") == 7.0
     assert retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0  # in the past
     assert (retry_after("Fri, 01 Jan 2100 00:00:00 GMT") or 0) > 50
+
+
+async def test_large_bodies_are_parsed_off_the_event_loop() -> None:
+    import threading
+
+    from stackcheck_mcp.http import THREAD_THRESHOLD
+
+    threads: list[str] = []
+
+    def reduce(data: object) -> int:
+        threads.append(threading.current_thread().name)
+        return len(data)  # type: ignore[arg-type]
+
+    big = {"versions": {str(i): "x" * 100 for i in range(THREAD_THRESHOLD // 100)}}
+    http = mock_http(lambda r: httpx2.Response(200, json=big if "big" in r.url.path else {}))
+    assert await http.get_json("https://registry.example/big", None, reduce) == 1
+    assert await http.get_json("https://registry.example/small", None, reduce) == 0
+    main = threading.current_thread().name
+    assert threads[0] != main and threads[1] == main
+    with pytest.raises(FetchError, match="invalid JSON"):
+        bad = mock_http(lambda r: httpx2.Response(200, content=b"{" * (THREAD_THRESHOLD + 1)))
+        await bad.get_json("https://registry.example/x", None, reduce)
