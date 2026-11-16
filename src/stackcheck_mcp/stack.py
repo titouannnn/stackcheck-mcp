@@ -30,11 +30,17 @@ from stackcheck_mcp.models import (
 )
 from stackcheck_mcp.runtimes import TARGET_SLUGS, resolve_targets, runtime_infos, utc_today
 
+# Requests larger than this are refused: each package costs registry calls.
+MAX_ITEMS = 100
+
 
 @dataclass
 class Settings:
     resolver_validation: bool = False
     resolver_timeout: float = 120.0
+    # Registry work of one call (resolvers have their own timeout): below the ~60 s many
+    # MCP clients wait, so a slow registry yields a partial answer instead of nothing.
+    call_timeout: float = 45.0
     today: Callable[[], date] = utc_today
 
 
@@ -78,13 +84,30 @@ async def _swallow(coro: Coroutine[Any, Any, Any]) -> None:
         await coro
 
 
-async def _guarded(ecosystem: str, coro: Coroutine[Any, Any, EcosystemResult]) -> EcosystemResult:
-    """One ecosystem crashing must not fail the whole call (it lands in ``errors``)."""
+def _timed_out(seconds: float) -> str:
+    # Fetches started before the deadline keep filling the cache: a retry is faster.
+    return f"timed out after {seconds:g}s (registries slow); retry"
+
+
+async def _guarded(
+    ecosystem: str, coro: Coroutine[Any, Any, EcosystemResult], deadline: float, seconds: float
+) -> EcosystemResult:
+    """One ecosystem crashing or stalling must not fail the whole call (``errors``)."""
     try:
-        return await coro
+        async with asyncio.timeout_at(deadline):
+            return await coro
+    except TimeoutError:
+        log.warning("%s check timed out", ecosystem)
+        return EcosystemResult(errors={"*": _timed_out(seconds)})
     except Exception as exc:
         log.exception("%s check failed", ecosystem)
         return EcosystemResult(errors={"*": f"internal error: {type(exc).__name__}"})
+
+
+def _check_size(**lists: list[str]) -> None:
+    for name, items in lists.items():
+        if len(items) > MAX_ITEMS:
+            raise InputError(f"at most {MAX_ITEMS} {name} entries per call ({len(items)} given)")
 
 
 def _prefetch(
@@ -149,8 +172,11 @@ async def check_stack(
     runtimes = [s for s in runtimes or [] if s.strip()]
     if not (npm_specs or pypi_specs or maven_specs or maven_bom or runtimes):
         raise InputError("pass at least one of npm, pypi, maven, maven_bom or runtimes")
+    _check_size(npm=npm_specs, pypi=pypi_specs, maven=maven_specs, runtimes=runtimes)
 
     today = app.settings.today()
+    seconds = app.settings.call_timeout
+    deadline = asyncio.get_running_loop().time() + seconds
     fetcher = app.fetcher()
     given: dict[str, str] = {k: v for k, v in (targets or {}).items() if isinstance(v, str)}
     errors: dict[str, dict[str, str]] = {}
@@ -168,7 +194,12 @@ async def check_stack(
     targets_task = asyncio.ensure_future(resolve_targets(fetcher, wanted, today))
     runtimes_task = asyncio.ensure_future(runtime_infos(fetcher, runtimes, today))
     prefetch = asyncio.gather(*_prefetch(fetcher, npm_specs, pypi_specs, maven_specs))
-    resolved, target_errors = await targets_task
+    try:
+        async with asyncio.timeout_at(deadline):
+            resolved, target_errors, target_warnings = await asyncio.shield(targets_task)
+    except TimeoutError:
+        resolved, target_errors = {}, {kind: _timed_out(seconds) for kind in wanted}
+        target_warnings = {}
     if target_errors:
         errors.setdefault("targets", {}).update(target_errors)
 
@@ -176,22 +207,29 @@ async def check_stack(
 
     async def run_npm() -> None:
         check = npm.check_npm(fetcher, npm_specs, resolved.get("node"))
-        results["npm"] = await _guarded("npm", check)
+        results["npm"] = await _guarded("npm", check, deadline, seconds)
 
     async def run_pypi() -> None:
         check = pypi.check_pypi(fetcher, pypi_specs, resolved.get("python"))
-        results["pypi"] = await _guarded("pypi", check)
+        results["pypi"] = await _guarded("pypi", check, deadline, seconds)
 
     async def run_maven() -> None:
         check = maven.check_maven(fetcher, maven_specs, maven_bom, resolved.get("java"))
-        results["maven"] = await _guarded("maven", check)
+        results["maven"] = await _guarded("maven", check, deadline, seconds)
 
     jobs = ([run_npm()] if npm_specs else []) + ([run_pypi()] if pypi_specs else [])
     jobs += [run_maven()] if maven_specs or maven_bom else []
     await asyncio.gather(*jobs)
-    await prefetch
+    if not prefetch.done():  # only after a timeout: the checks reuse every prefetch
+        prefetch.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await prefetch
     outcomes = await _validate(app.settings, results, resolved.get("python"))
-    runtime_data, runtime_errors = await runtimes_task
+    try:
+        async with asyncio.timeout_at(deadline):
+            runtime_data, runtime_errors = await asyncio.shield(runtimes_task)
+    except TimeoutError:
+        runtime_data, runtime_errors = {}, {slug: _timed_out(seconds) for slug in runtimes}
 
     out: dict[str, Any] = {}
     if resolved:
@@ -218,6 +256,8 @@ async def check_stack(
         out["issues"] = issues
     if errors:
         out["errors"] = errors
+    if target_warnings:
+        out["warnings"] = {"targets": target_warnings}
     if statuses:
         out["validation"] = statuses
     if fetcher.stale:
@@ -229,8 +269,14 @@ async def get_runtime_info(app: App, products: list[str]) -> RuntimeResult:
     products = [p for p in products if p.strip()]
     if not products:
         raise InputError("pass at least one endoflife.date product slug")
+    _check_size(products=products)
     fetcher = app.fetcher()
-    infos, errors = await runtime_infos(fetcher, products, app.settings.today())
+    seconds = app.settings.call_timeout
+    try:
+        async with asyncio.timeout(seconds):
+            infos, errors = await runtime_infos(fetcher, products, app.settings.today())
+    except TimeoutError:
+        infos, errors = {}, {slug: _timed_out(seconds) for slug in products}
     out: RuntimeResult = {}
     if infos:
         out["runtimes"] = infos
@@ -320,7 +366,10 @@ async def explain(app: App, ecosystem: str, package: str, version: str = "") -> 
     out = cast(Explanation, {"ecosystem": ecosystem, "package": package.strip()})
     handlers = {"npm": _explain_npm, "pypi": _explain_pypi, "maven": _explain_maven}
     try:
-        await handlers[ecosystem](fetcher, package, version.strip(), out)
+        async with asyncio.timeout(app.settings.call_timeout):
+            await handlers[ecosystem](fetcher, package, version.strip(), out)
+    except TimeoutError:
+        out["error"] = _timed_out(app.settings.call_timeout)
     except (FetchError, ValueError) as exc:  # NotFoundError says "not found" or "unpublished"
         out["error"] = str(exc)
     if fetcher.stale:

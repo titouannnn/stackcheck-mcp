@@ -41,6 +41,12 @@ class ReadOnlyCache(Cache):
     def put(self, namespace: str, key: str, data: Any) -> None:
         pass
 
+    def touch(self, namespace: str, key: str) -> None:
+        pass
+
+    def prune(self) -> int:
+        return 0
+
 
 @pytest.fixture
 def fixture_cache() -> Cache:

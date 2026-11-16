@@ -62,3 +62,29 @@ a. runtimes + cache + http · b. npm · c. PyPI · d. MCP server + stdio integra
 - `-m resolvers`: every issue-free set resolves with uv/npm; every conflict pair is rejected.
 - `-m live`: property tests pass against the live registries.
 - Reference stack, live: cold 1.6 s, warm 60–80 ms, 963 bytes of compact JSON.
+
+## 7. Audit follow-up (2026-11-16)
+
+Found by a full review and live probes, fixed one commit each on `audit-fixes`:
+
+12. **Maven build-date versions**: `commons-collections` answered `20040616`, because
+    Maven orders it above `3.2.2`. Such versions are now skipped unless nothing else exists
+    or the user's range names one. Central's search index has the same bug (its
+    `latestVersion` is `20040616`), so `sweep.py` compares publication dates instead.
+13. **Shared dependencies**: two requested packages can need incompatible versions of an
+    unrequested one (`fastapi==0.95.0` + `sse-starlette` on starlette;
+    `eslint-config-airbnb` + `eslint-plugin-unicorn` on eslint). New issue kind `shared`,
+    one level deep. Deeper conflicts stay a `--resolver-validation` matter, and the README
+    says so.
+14. **Wheels are checked for Linux x86_64** (`any`, `manylinux*_x86_64`), the platform the
+    markers and `uv --python-platform linux` assume. Releases without any file are not
+    candidates. Cache layout `v2`. The PyPI fixtures were re-reduced from the live Simple
+    API, keeping only files uploaded before their recording time.
+15. `suggestion` always names the flagged package, and `alternative` a `required_by` one.
+    engines/python/java fixes moved to `suggestion`.
+16. Robustness: 100 entries per list, a 45 s per-call deadline, `Retry-After`, 404s cached
+    for 15 minutes, large JSON parsed off the event loop, cache pruning (60 days), and the
+    whole process tree killed on resolver timeouts (npm is a `.cmd` shim on Windows).
+    Resolvers use the public registries whatever the user's config says.
+17. UX: `name@latest` accepted, EOL targets reported in `warnings`, `runtimes: ["java"]`
+    works, no non-loopback HTTP bind without `--allow-remote`.

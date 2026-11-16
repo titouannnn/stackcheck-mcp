@@ -139,6 +139,7 @@ async def test_targets_and_partial_errors() -> None:
     assert result["targets"] == {"node": "18.20.8", "python": "3.9.25"}
     assert {i["kind"] for i in result["issues"]} == {"engines", "python"}
     assert result["errors"]["targets"] == {"ruby": "unknown target (use node, python, java)"}
+    assert set(result["warnings"]["targets"]) == {"node", "python"}  # both cycles are EOL
     # Not in the fixtures and the network is off: reported, not fatal.
     assert "no-such-pkg-zzz" in result["errors"]["npm"]
     assert result["npm"] == {"vite": "8.3.5"}
@@ -224,6 +225,7 @@ def stdio_params(tmp_path: Path) -> StdioServerParameters:
         env={
             "STACKCHECK_CACHE_DIR": str(cache),
             "STACKCHECK_CACHE_TTL": str(10**10),
+            "STACKCHECK_CACHE_MAX_AGE": "0",  # copied fixtures keep old mtimes
             "HTTPS_PROXY": dead_proxy,
             "HTTP_PROXY": dead_proxy,
             "NO_PROXY": "",
@@ -269,3 +271,50 @@ async def test_streamable_http_transport(stdio_params: StdioServerParameters) ->
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+class StallingTransport(httpx2.AsyncBaseTransport):
+    """A registry that never answers in time."""
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(30)
+        return httpx2.Response(500)
+
+
+async def test_slow_registries_give_a_partial_answer_in_time() -> None:
+    from stackcheck_mcp import stack
+    from stackcheck_mcp.cache import Cache
+
+    app = App(
+        settings=Settings(today=lambda: TODAY, call_timeout=0.5),
+        cache=Cache(None),
+        http_factory=lambda: HttpClient(transport=StallingTransport(), attempts=1),
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await stack.check_stack(
+        app, npm_specs=["react"], pypi_specs=["fastapi"], runtimes=["nodejs"]
+    )
+    explained = await stack.explain(app, "npm", "react")
+    runtimes = await stack.get_runtime_info(app, ["python"])
+    assert loop.time() - started < 5
+    timed_out = "timed out after 0.5s (registries slow); retry"
+    assert result == {
+        "errors": {
+            "targets": {"node": timed_out, "python": timed_out},
+            "npm": {"*": timed_out},
+            "pypi": {"*": timed_out},
+            "runtimes": {"nodejs": timed_out},
+        }
+    }
+    assert explained["error"] == timed_out
+    assert runtimes == {"errors": {"python": timed_out}}
+    await app.aclose()
+
+
+async def test_oversized_requests_are_tool_errors() -> None:
+    async with Client(build_server(offline_app())) as client:
+        result = await client.call_tool("check_stack", {"npm": [f"p{i}" for i in range(101)]})
+        products = await client.call_tool("get_runtime_info", {"products": ["x"] * 101})
+    assert result.is_error and products.is_error
+    assert "at most 100 npm entries per call (101 given)" in result.content[0].text  # type: ignore[union-attr]

@@ -4,7 +4,7 @@ An MCP server that gives coding agents the **latest stable version** of every np
 Maven package in a stack, **and every incompatibility between them**, in one call and a few
 hundred tokens of JSON.
 
-<!-- mcp-name: io.github.OWNER/stackcheck-mcp -->
+<!-- mcp-name: io.github.titouannnn/stackcheck-mcp -->
 
 ## Why
 
@@ -48,6 +48,12 @@ Streamable HTTP instead of stdio:
 uvx stackcheck-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
 ```
 
+The HTTP server has **no authentication**. On a loopback address the MCP SDK also rejects
+requests whose `Host`/`Origin` is not local (DNS rebinding protection). Any other `--host`
+is refused unless you pass `--allow-remote`, which you should only do behind a proxy that
+authenticates clients; that also disables the rebinding protection, and with
+`--resolver-validation` every caller can make the server run `uv` and `npm`.
+
 Only `uv` is needed. Public registries only, no credentials.
 
 ### Options
@@ -55,15 +61,18 @@ Only `uv` is needed. Public registries only, no credentials.
 | Flag | Default | |
 |---|---|---|
 | `--http` | off (stdio) | serve streamable HTTP |
-| `--host`, `--port` | `127.0.0.1`, `8000` | HTTP bind address |
+| `--host`, `--port` | `127.0.0.1`, `8000` | HTTP bind address (loopback only, unless `--allow-remote`) |
+| `--allow-remote` | off | accept a non-loopback `--host` (no authentication: put an authenticating proxy in front) |
 | `--resolver-validation` | off | also check the picks with real resolvers (see below) |
 | `--resolver-timeout` | `120` | seconds per resolver run |
+| `--call-timeout` | `45` | seconds of registry work per tool call; past it, the answer is partial and the slow parts are in `errors` (fetches keep warming the cache) |
 | `--log-level` | `WARNING` | logs go to stderr (stdout is the stdio transport) |
 
 | Environment | Default | |
 |---|---|---|
 | `STACKCHECK_CACHE_DIR` | platform cache dir (`platformdirs`) | on-disk cache of reduced registry data |
 | `STACKCHECK_CACHE_TTL` | `21600` (6 h) | seconds; `0` disables the cache |
+| `STACKCHECK_CACHE_MAX_AGE` | `60` | days; entries unused for longer (and those of older cache layouts) are deleted at startup, at most once a day; `0` never prunes |
 | `HTTPS_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR` | | honoured (the OS trust store is used on Windows/macOS) |
 
 ## Tools
@@ -81,13 +90,15 @@ Only `uv` is needed. Public registries only, no credentials.
 }
 ```
 
-All fields are optional, but at least one list is required.
+All fields are optional, but at least one list is required. Each list takes at most 100
+entries.
 
 - npm: `name` or `name@range` (`@types/react@^19`: the range follows the last `@`).
+  `name@latest` means the latest stable; other dist-tags (`next`, `canary`, …) are rejected.
 - PyPI: PEP 508 with extras (`uvicorn[standard]>=0.30`); URLs and markers are rejected.
 - Maven: `groupId:artifactId[:version|range]`, e.g. `[3.5,4.0)`. A plain version is exact.
 - `maven_bom`: a BOM to align against (`groupId:artifactId[:version|range]`, latest by default).
-- `runtimes`: any [endoflife.date](https://endoflife.date) slug (aliases like `node` work).
+- `runtimes`: any [endoflife.date](https://endoflife.date) slug (aliases like `node` work; `java` means `eclipse-temurin`, like the Java target).
 - `targets`: a cycle (`"24"`, `"3.14"`), a prefix (`"3"`) or an exact version. Defaults:
   Node = active maintained LTS, Python = newest released maintained cycle, Java = latest LTS of
   `eclipse-temurin`. A target is resolved (and shown) only when an ecosystem needs it.
@@ -156,6 +167,7 @@ Every empty field is omitted: no `null`, `[]` or `{}`. The tools also publish an
 | `runtimes` | `{slug: runtime info}` as in `get_runtime_info` |
 | `issues` | list of issues (below) |
 | `errors` | `{"npm"\|"pypi"\|"maven"\|"runtimes"\|"targets": {item: message}}`. One failure never fails the call |
+| `warnings` | `{"targets": {"node"\|"python"\|"java": message}}` when a target you asked for is end-of-life (`"3.9 is end-of-life since 2025-10-31"`) |
 | `validation` | `{"npm"\|"pypi": "skipped"\|"ok"\|"failed"\|"unavailable"\|"timeout"}` |
 | `stale` | `true` when some data came from an expired cache entry because a registry was unreachable |
 
@@ -169,20 +181,26 @@ Issue:
 | `required_by` | the package (or BOM) that declares the constraint |
 | `range` | the declared constraint |
 | `target` | the runtime target checked (`node 24.22.1`, `python 3.15.2`, `java 21.0.13+9`) |
-| `suggestion` | highest stable version of `package` that satisfies every constraint the other requested packages put on it, and your own constraint |
-| `alternative` | when there is no suggestion: highest stable version of the constraining package that accepts the picked one |
+| `suggestion` | another version of the flagged package: the highest stable one that fixes the issue (satisfies every constraint the other requested packages, the target or the BOM put on it, and your own range). `resolver` issues: uv's own choices |
+| `alternative` | only when there is no suggestion (`peer`, `requires`, `shared`): highest stable version of a `required_by` package that accepts the picked one (or, for `shared`, lets the dependency resolve) |
 | `severity` | `"warn"`; absent means error |
 | `message` | resolver output, deprecation or yank reason, … |
 
 `suggestion` and `alternative` are indicative only. The primary answer never moves.
 
+**Scope.** Issues cover the constraints between the packages you request, and those that
+two of them put on a dependency they share (one level deep). A conflict further down the
+dependency tree is only caught by `--resolver-validation`: no issue does not guarantee that
+the set installs.
+
 | Kind | Meaning |
 |---|---|
 | `peer` | npm `peerDependencies` between requested packages (optional peers count when requested) |
 | `requires` | PyPI `requires_dist` between requested packages (markers evaluated for the target, extras honoured) |
+| `shared` | two or more requested packages need incompatible versions of a package you did not request (npm required peers, PyPI `requires_dist`); `package` is that dependency, `required_by` lists them |
 | `engines` | npm `engines.node` vs the Node target |
 | `python` | `requires_python` vs the Python target |
-| `wheels` | no wheel for the target CPython (`warn` when an sdist exists) |
+| `wheels` | no wheel for the target CPython on Linux x86_64 (`any` / `manylinux*_x86_64` tags; `warn` when an sdist exists) |
 | `bom` | Maven version differs from the one managed by `maven_bom` (`warn`) |
 | `java` | Spring Boot's Java baseline (`java.version` of `spring-boot-starter-parent`) vs the Java target |
 | `deprecated` | npm deprecated version, PyPI project archived/deprecated/quarantined (`warn`) |
@@ -195,10 +213,13 @@ Issue:
 - **npm**: versions matching `^\d+\.\d+\.\d+$` only, never above `dist-tags.latest`
   (unless `latest` is itself a pre-release). Canary/next/experimental tags are ignored.
 - **PyPI**: PEP 440 final releases (no pre/dev). A version whose files are all yanked is
-  used only if nothing else matches, and is always flagged.
+  used only if nothing else matches, and is always flagged. A release without any
+  installable file (all deleted, or eggs only) is ignored.
 - **Maven**: no alpha/beta/rc/cr/milestone/snapshot/preview/ea qualifiers (`-M1`, `.RC2`,
   `-SNAPSHOT`, `a1`, `b2`, …), ordered with Maven's `ComparableVersion` rules. The
   `<release>` tag of `maven-metadata.xml` is not trusted (it is often a release candidate).
+  Early build-date versions (`commons-collections` `20040616`, which Maven orders above
+  `3.2.2`) are skipped unless the artifact has nothing else or your range names one.
 - Version comparisons are numeric, never lexicographic (`6.0.10 > 6.0.9`).
 - Ranges that cannot be evaluated (`workspace:*`, `npm:` aliases, `file:`, git URLs, dist-tag
   names) never create issues.
@@ -224,6 +245,8 @@ Central `maven-metadata.xml` and POMs, and endoflife.date API v1. Only **reduced
 cached (a few KB per package; `typescript`'s 8.7 MB document becomes 2 KB). Per-version data
 (PyPI metadata, POMs) never expires. Writes are atomic and safe across processes. When a
 registry is unreachable, expired entries are served and the answer says `"stale": true`.
+A "not found" answer is reused for 15 minutes (at most the TTL), so a misspelled package
+is not looked up again on every call while a new publish still shows up quickly.
 
 Measured for the reference stack: cold (empty cache) 1.6 s, warm 60–80 ms.
 
@@ -239,7 +262,7 @@ Measured for the reference stack: cold (empty cache) 1.6 s, warm 60–80 ms.
 ## Development
 
 ```bash
-uv sync --all-extras
+uv sync
 uv run pytest                  # offline, deterministic (recorded fixtures, frozen dates)
 uv run pytest -m live          # live registries, asserts properties
 uv run pytest -m resolvers     # differential tests vs real uv/npm (needs node + uv)
@@ -247,11 +270,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy --strict src/
 uv run python scripts/record_fixtures.py   # refresh tests/fixtures/cache from the registries
 uv run python scripts/reference_run.py     # reference stack, live, with timings
+uv run python scripts/sweep.py --npm 1000 --pypi 1000   # picks vs registry truth, top packages
 ```
 
-The differential tests are the main correctness guarantee. Every set `check_stack` calls
-issue-free must resolve with `uv pip compile` / `npm install --package-lock-only`, and every
-`peer`/`requires` conflict it reports must be rejected by them. See [AGENTS.md](AGENTS.md)
+The differential tests are the main correctness guarantee. For each stack they cover, a set
+`check_stack` calls issue-free must resolve with `uv pip compile` / `npm install
+--package-lock-only`, and every `peer`/`requires`/`shared` conflict it reports must be
+rejected by them. See [AGENTS.md](AGENTS.md)
 for the project's invariants and [docs/PLAN.md](docs/PLAN.md) for verified facts and
 deviations from the original spec.
 

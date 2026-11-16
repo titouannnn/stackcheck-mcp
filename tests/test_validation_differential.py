@@ -3,8 +3,10 @@
 Run with ``uv run pytest -m resolvers`` (network, ``uv`` and ``npm`` on PATH). Registry
 data drifts, so the assertions are properties:
 
-* every set ``check_stack`` calls free of ``peer``/``requires`` issues must resolve;
-* for every ``peer``/``requires`` issue, the pair it names must be rejected.
+* every set ``check_stack`` calls free of ``peer``/``requires``/``shared`` issues must
+  resolve (for these stacks: deeper conflicts are out of scope without
+  ``--resolver-validation``);
+* for every ``peer``/``requires``/``shared`` issue, the packages it names must be rejected.
 
 If a resolver disagrees with us, our logic is wrong until proven otherwise.
 """
@@ -17,6 +19,7 @@ import pytest
 
 from stackcheck_mcp import stack, validation
 from stackcheck_mcp.cache import Cache
+from stackcheck_mcp.models import Issue
 from tests.reference_stack import NPM, PYPI
 
 pytestmark = [
@@ -27,25 +30,45 @@ pytestmark = [
 ]
 
 TIME_LIMIT = 300.0
-CONFLICTS = ("peer", "requires")
+CONFLICTS = ("peer", "requires", "shared")
 
 NPM_STACKS = [
     NPM,  # typescript 7 vs typescript-eslint's cap: must be rejected
     [s if s != "typescript" else "typescript@~6.0" for s in NPM],  # the suggested fix
     ["react", "react-dom", "@types/react", "@types/react-dom"],
     ["vite", "@vitejs/plugin-react", "vitest"],
+    ["eslint-config-airbnb", "eslint-plugin-unicorn"],  # incompatible eslint peers
 ]
 PYPI_STACKS = [
     PYPI,
     ["fastapi", "pydantic<2.13"],
     ["pydantic", "pydantic-core<2.50"],  # deliberately impossible pin
     ["pydantic", "pydantic-core<2.47"],
+    ["fastapi==0.95.0", "sse-starlette"],  # incompatible starlette requirements
 ]
 
 
 @pytest.fixture
 def app(tmp_path: Path) -> stack.App:
     return stack.App(cache=Cache(tmp_path / "cache"))
+
+
+def named(issue: Issue) -> list[str]:
+    """The pins a conflict names: both sides of a pair, or every package sharing a dep."""
+    if issue["kind"] == "shared":
+        return issue["required_by"].split(", ")
+    return [issue["package"], issue["required_by"]]
+
+
+def with_alternative(issue: Issue, separator: str) -> list[str] | None:
+    """The pins of a ``shared`` conflict once its ``alternative`` is applied."""
+    if issue["kind"] != "shared" or "alternative" not in issue:
+        return None
+    ((name, version),) = issue["alternative"].items()
+    return [
+        f"{name}{separator}{version}" if pin.rsplit(separator, 1)[0] == name else pin
+        for pin in named(issue)
+    ]
 
 
 @pytest.mark.parametrize("specs", NPM_STACKS, ids=lambda s: "+".join(s)[:60])
@@ -59,11 +82,11 @@ async def test_npm_agrees_with_npm_install(app: stack.App, specs: list[str]) -> 
     if not conflicts:
         assert outcome.status == "ok", outcome.issues
     for issue in conflicts:
-        rejected = await validation.validate_npm(
-            [issue["package"], issue["required_by"]], TIME_LIMIT
-        )
+        rejected = await validation.validate_npm(named(issue), TIME_LIMIT)
         assert rejected.status == "failed", issue
         assert outcome.status == "failed"
+        if fixed := with_alternative(issue, "@"):  # the indicative fix must resolve
+            assert (await validation.validate_npm(fixed, TIME_LIMIT)).status == "ok", fixed
 
 
 @pytest.mark.parametrize("specs", PYPI_STACKS, ids=lambda s: "+".join(s)[:60])
@@ -78,10 +101,13 @@ async def test_pypi_agrees_with_uv(app: stack.App, specs: list[str]) -> None:
     if not conflicts:
         assert outcome.status == "ok", outcome.issues
     for issue in conflicts:
-        pinned = [issue["package"], issue["required_by"]]
+        pinned = named(issue)
         rejected = await validation.validate_pypi(pinned, pinned, python, TIME_LIMIT)
         assert rejected.status == "failed", issue
         assert outcome.status == "failed"
+        if fixed := with_alternative(issue, "=="):  # the indicative fix must resolve
+            accepted = await validation.validate_pypi(fixed, fixed, python, TIME_LIMIT)
+            assert accepted.status == "ok", fixed
 
 
 async def test_unpinned_uv_choice_matches_our_pick(app: stack.App) -> None:

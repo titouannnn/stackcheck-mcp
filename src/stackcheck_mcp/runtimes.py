@@ -211,6 +211,22 @@ def resolve_target(kind: str, product: Product, spec: str | None, today: date) -
     raise ValueError(f"unknown {kind} version {spec!r} (known cycles: {known})")
 
 
+def eol_warning(product: Product, version: str, today: date) -> str | None:
+    """Why a resolved target is a poor choice: its cycle is past its end of life."""
+    cycles = [
+        r
+        for r in product["releases"]
+        if version == r["cycle"] or version.startswith(r["cycle"] + ".")
+    ]
+    if not cycles:
+        return None
+    release = max(cycles, key=lambda r: len(r["cycle"]))
+    eol = _date(release.get("eol"))
+    if eol is None or eol > today:
+        return None
+    return f"{release['cycle']} is end-of-life since {eol.isoformat()}"
+
+
 def levenshtein(a: str, b: str) -> int:
     previous = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
@@ -222,16 +238,21 @@ def levenshtein(a: str, b: str) -> int:
 
 
 def suggest_slugs(query: str, products: list[ProductRef], limit: int = 3) -> list[str]:
-    """Closest product slugs: substring matches first, then edit distance."""
+    """Closest product slugs: substring matches first, then small edit distances.
+
+    The distance allowed grows with the query (1 edit per 3 characters): ``java`` must
+    not suggest ``jira-software`` because of its alias ``jira``.
+    """
     scored: dict[str, tuple[int, int]] = {}
     for product in products:
         for candidate in [product["name"], *product["aliases"]]:
-            substring = 0 if query in candidate or candidate in query else 1
-            score = (substring, levenshtein(query, candidate))
+            contained = query in candidate or (len(candidate) >= 3 and candidate in query)
+            score = (0 if contained else 1, levenshtein(query, candidate))
             if product["name"] not in scored or score < scored[product["name"]]:
                 scored[product["name"]] = score
     ranked = sorted(scored.items(), key=lambda item: (item[1], item[0]))
-    return [name for name, (substring, dist) in ranked if substring == 0 or dist <= 4][:limit]
+    allowed = max(1, len(query) // 3)
+    return [name for name, (substring, dist) in ranked if substring == 0 or dist <= allowed][:limit]
 
 
 # --------------------------------------------------------------------------- fetch
@@ -269,9 +290,13 @@ async def _unknown_product_message(fetcher: Fetcher, slug: str) -> str:
 
 
 async def lookup_product(fetcher: Fetcher, slug: str) -> Product:
-    """Fetch a product, turning a 404 into a ``ValueError`` with slug suggestions."""
+    """Fetch a product, turning a 404 into a ``ValueError`` with slug suggestions.
+
+    The target names (``node``, ``python``, ``java``) work as slugs too.
+    """
     try:
-        return await fetch_product(fetcher, normalize_slug(slug))
+        name = normalize_slug(slug)
+        return await fetch_product(fetcher, TARGET_SLUGS.get(name, name))
     except NotFoundError:
         raise ValueError(await _unknown_product_message(fetcher, slug.strip().lower())) from None
 
@@ -295,10 +320,14 @@ async def runtime_infos(
 
 async def resolve_targets(
     fetcher: Fetcher, wanted: dict[str, str | None], today: date
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve ``{"node": "24" | None, ...}`` to full versions; errors keyed by target."""
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Resolve ``{"node": "24" | None, ...}`` to full versions.
+
+    Also returns errors and warnings (end-of-life cycle asked for), keyed by target.
+    """
     resolved: dict[str, str] = {}
     errors: dict[str, str] = {}
+    warnings: dict[str, str] = {}
 
     async def one(kind: str, spec: str | None) -> None:
         try:
@@ -306,6 +335,9 @@ async def resolve_targets(
             resolved[kind] = resolve_target(kind, product, spec, today)
         except (ValueError, FetchError) as exc:
             errors[kind] = str(exc)
+            return
+        if warning := eol_warning(product, resolved[kind], today):
+            warnings[kind] = warning
 
     await asyncio.gather(*(one(kind, spec) for kind, spec in wanted.items()))
-    return {k: resolved[k] for k in TARGET_SLUGS if k in resolved}, errors
+    return {k: resolved[k] for k in TARGET_SLUGS if k in resolved}, errors, warnings

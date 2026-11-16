@@ -10,11 +10,13 @@ from stackcheck_mcp.npm import (
     NpmSpec,
     candidates,
     check_npm,
+    check_shared,
     decide,
     fetch_doc,
     parse_spec,
     pick,
     reduce_doc,
+    shared_peers,
 )
 from stackcheck_mcp.semver_utils import is_evaluable, satisfies, sort_versions
 from tests.conftest import mock_http
@@ -112,7 +114,7 @@ async def test_engines_against_old_node_target(fetcher: Fetcher) -> None:
     assert vite["range"] == "^20.19.0 || >=22.12.0"
     assert vite["target"] == "node 18.20.8"
     # 6.4.5 declares engines.node "^18.0.0 || ^20.0.0 || >=22.0.0".
-    assert vite["alternative"] == {"vite": "6.4.5"}
+    assert vite["suggestion"] == {"vite": "6.4.5"}
     assert "eslint@10.13.0" in by_package
     assert "react@19.3.1" not in by_package  # engines >=0.10.0
 
@@ -154,6 +156,12 @@ def test_parse_spec() -> None:
     assert parse_spec(" vite@^8 ") == NpmSpec("vite", "^8")
     assert parse_spec("react@") == NpmSpec("react")
     assert parse_spec("typescript@>=5 <7") == NpmSpec("typescript", ">=5 <7")
+    assert parse_spec("react@latest") == NpmSpec("react")
+    assert parse_spec("@types/react@latest") == NpmSpec("@types/react")
+    with pytest.raises(ValueError, match="dist-tag 'next' not supported"):
+        parse_spec("react@next")
+    with pytest.raises(ValueError, match="invalid version range"):
+        parse_spec("react@!!garbage")
     for bad in ["bad name", "../etc", "@scope/a/b", "a\\b", "x\ny", "", "@/x", "react@npm:foo@1"]:
         with pytest.raises(ValueError):
             parse_spec(bad)
@@ -334,3 +342,99 @@ async def test_unpublished_package_is_reported_as_such() -> None:
     result = await check_npm(Fetcher(http, Cache(None)), ["contenthook"], None)
     assert result.errors == {"contenthook": "unpublished"}
     await http.aclose()
+
+
+# ----------------------------------------------------------------- shared peers
+
+
+SHARED_DOCS = {
+    "config": doc(
+        {
+            "0.1.0": {},  # no peer: resolves, but further back than plugin 1.0.0
+            "1.0.0": {"peerDependencies": {"eslint": "^8"}},
+            "2.0.0": {"peerDependencies": {"eslint": "^8"}},
+        }
+    ),
+    "plugin": doc(
+        {
+            "0.1.0": {},  # no peer: resolves too, but older than 1.0.0
+            "1.0.0": {"peerDependencies": {"eslint": "^8 || ^9"}},
+            "2.0.0": {"peerDependencies": {"eslint": ">=9"}},
+        }
+    ),
+    "helper": doc(
+        {
+            "1.0.0": {
+                "peerDependencies": {"eslint": "*", "ts": "^5", "react": "^19"},
+                "peerDependenciesMeta": {"ts": {"optional": True}},
+            }
+        }
+    ),
+    "react": doc({"19.0.0": {}}),
+}
+
+
+def test_shared_required_peer_conflict() -> None:
+    specs = [NpmSpec("config"), NpmSpec("plugin"), NpmSpec("helper"), NpmSpec("react")]
+    picks, issues, _ = decide(specs, SHARED_DOCS, None)
+    assert issues == []  # no requested package constrains another one
+    shared = shared_peers(picks)
+    # react is requested (a peer issue, if any); ts is optional and not requested.
+    assert list(shared) == ["eslint"]
+    eslint = doc({"8.57.1": {}, "9.39.0": {}})
+    assert check_shared(shared, {"eslint": eslint}) == [
+        {
+            "kind": "shared",
+            "ecosystem": "npm",
+            "package": "eslint",
+            "required_by": "config@2.0.0, plugin@2.0.0, helper@1.0.0",
+            "message": "no stable eslint satisfies config@2.0.0 (^8) and "
+            "plugin@2.0.0 (>=9) and helper@1.0.0 (*)",
+            "alternative": {"plugin": "1.0.0"},  # config has no version without ^8
+        }
+    ]
+    assert check_shared(shared, {}) == []  # unknown: never a false conflict
+    compatible = shared_peers(
+        decide([NpmSpec("plugin", "1.0.0"), NpmSpec("config")], SHARED_DOCS, None)[0]
+    )
+    assert check_shared(compatible, {"eslint": eslint}) == []
+
+
+async def test_shared_peer_is_fetched_and_checked() -> None:
+    raw = {
+        "config": {"versions": {"1.0.0": {"peerDependencies": {"eslint": "^8"}}}},
+        "plugin": {"versions": {"1.0.0": {"peerDependencies": {"eslint": ">=9"}}}},
+        "eslint": {"versions": {"8.57.1": {}, "9.39.0": {}}},
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        name = request.url.path.strip("/")
+        return httpx2.Response(200, content=json.dumps({"name": name, **raw[name]}))
+
+    http = mock_http(handler)
+    result = await check_npm(Fetcher(http, Cache(None)), ["config", "plugin"], None)
+    assert [(i["kind"], i["package"]) for i in result.issues] == [("shared", "eslint")]
+    assert "eslint" not in result.picks  # not requested: never answered
+    await http.aclose()
+
+
+def test_shared_alternative_prefers_the_smallest_step_back() -> None:
+    # Real shape: eslint-config-airbnb 5.0.0 (2015) declares eslint >=1.0.0, while
+    # eslint-plugin-unicorn 56.0.1 accepts eslint 8. The plugin's step back is smaller.
+    docs = {
+        "old-config": doc(
+            {
+                "1.0.0": {"peerDependencies": {"host": ">=1"}},
+                **{f"{major}.0.0": {"peerDependencies": {"host": "^1"}} for major in range(2, 7)},
+            }
+        ),
+        "new-plugin": doc(
+            {
+                "9.0.0": {"peerDependencies": {"host": "^1 || ^2"}},
+                "10.0.0": {"peerDependencies": {"host": ">=2"}},
+            }
+        ),
+    }
+    picks, _, _ = decide([NpmSpec("old-config"), NpmSpec("new-plugin")], docs, None)
+    issues = check_shared(shared_peers(picks), {"host": doc({"1.0.0": {}, "2.0.0": {}})})
+    assert issues[0]["alternative"] == {"new-plugin": "9.0.0"}

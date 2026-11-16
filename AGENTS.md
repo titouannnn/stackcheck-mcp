@@ -9,7 +9,7 @@ An open-source (Apache-2.0) Python MCP server. Given lists of npm / PyPI / Maven
 ## Commands
 
 ```bash
-uv sync --all-extras                      # set up the environment
+uv sync                                   # set up the environment (dev group included)
 uv run pytest                             # offline unit + integration tests (default, must stay green)
 uv run pytest -m live                     # live registry tests (network; assert properties, not exact versions)
 uv run pytest -m resolvers                # differential tests vs real uv/npm (needs node + uv on PATH)
@@ -77,7 +77,7 @@ Registries, APIs and SDKs change. Before relying on any external format or libra
 
 - Default `pytest` is **offline** and deterministic (fixtures + frozen dates). Never add network calls to unmarked tests.
 - `live` tests assert properties ("typescript-eslint still caps typescript → a `peer` issue exists", "no canary returned"), never exact version numbers.
-- `resolvers` tests are the main correctness guarantee: every set we call issue-free must pass `uv pip compile` / `npm install --package-lock-only`; every `peer` / `requires` conflict we report must be rejected by them. If they disagree with us, our logic is wrong until proven otherwise.
+- `resolvers` tests are the main correctness guarantee: every tested set we call issue-free must pass `uv pip compile` / `npm install --package-lock-only`; every `peer` / `requires` / `shared` conflict we report must be rejected by them. If they disagree with us, our logic is wrong until proven otherwise. Conflicts deeper than one shared dependency are out of scope without `--resolver-validation`: pick test stacks accordingly.
 - The reference stack (React/Vite/TypeScript front, FastAPI/Pydantic/SQLAlchemy back, see `docs/SPEC.md` §9) is the primary end-to-end fixture. When refreshing fixtures, record the date in the fixture file.
 
 ## Do not

@@ -11,6 +11,7 @@ from stackcheck_mcp.pypi import (
     PypiIndex,
     _wheel_tags,
     check_pypi,
+    check_shared,
     check_wheels,
     fetch_index,
     marker_env,
@@ -19,6 +20,7 @@ from stackcheck_mcp.pypi import (
     reduce_simple,
     requirements_on,
     select,
+    shared_requirements,
     version_info,
     wheel_ok,
 )
@@ -113,8 +115,8 @@ async def test_python_target_too_old(fetcher: Fetcher) -> None:
     fastapi = by_package["fastapi==0.162.0"]
     assert fastapi["kind"] == "python" and fastapi["range"] == ">=3.10"
     assert fastapi["target"] == "python 3.9.25"
-    assert fastapi["alternative"] == {"fastapi": "0.128.8"}
-    assert by_package["sqlalchemy==2.1.6"]["alternative"] == {"sqlalchemy": "2.0.55"}
+    assert fastapi["suggestion"] == {"fastapi": "0.128.8"}
+    assert by_package["sqlalchemy==2.1.6"]["suggestion"] == {"sqlalchemy": "2.0.55"}
 
 
 async def test_wheels_for_future_python(fetcher: Fetcher) -> None:
@@ -206,6 +208,17 @@ def test_yanked_detection_requires_all_files() -> None:
     assert version_info(index, "1.1")["yanked"] == "bad build"
 
 
+def test_release_without_files_is_not_a_candidate() -> None:
+    # 1.2 is listed (its files were deleted), 1.3 only ships an egg: nothing to install.
+    files = [
+        {"filename": "demo-1.1-py3-none-any.whl"},
+        {"filename": "demo-1.3-py3.12.egg"},
+    ]
+    index = reduce_simple(simple(files, ["1.1", "1.2", "1.3"]))
+    assert list(index["versions"]) == ["1.1"]
+    assert select(index, parse_spec("demo"))[0] == "1.1"
+
+
 def test_yanked_latest_is_flagged_and_skipped() -> None:
     files = [
         {"filename": "demo-1.0-py3-none-any.whl"},
@@ -234,11 +247,17 @@ def test_yanked_latest_is_flagged_and_skipped() -> None:
     [
         ("x-1.0-py3-none-any.whl", (True, set(), None)),
         ("x-1.0-py2.py3-none-any.whl", (True, set(), None)),
-        ("x-1.0-py3-none-macosx_11_0_arm64.whl", (True, set(), None)),  # ruff-style
+        ("x-1.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", (True, set(), None)),
+        # Other platforms do not count: the checks target CPython on Linux x86_64.
+        ("x-1.0-py3-none-macosx_11_0_arm64.whl", (False, set(), None)),
+        ("x-1.0-cp315-cp315-musllinux_1_2_x86_64.whl", (False, set(), None)),
+        ("x-1.0-cp315-cp315-manylinux_2_17_aarch64.whl", (False, set(), None)),
+        ("x-1.0-cp35-cp35m-manylinux1_x86_64.whl", (False, {5}, None)),
         ("x-1.0-cp39-abi3-manylinux_2_17_x86_64.whl", (False, set(), 9)),
         ("x-1.0-cp315-cp315-manylinux_2_17_x86_64.whl", (False, {15}, None)),
         ("x-1.0-cp315-cp315t-manylinux_2_17_x86_64.whl", (False, set(), None)),  # free-threaded
-        ("x-1.0-cp38-cp38m-win_amd64.whl", (False, {8}, None)),
+        ("x-1.0-cp38-cp38m-win_amd64.whl", (False, set(), None)),
+        ("x-1.0-cp38-cp38m-manylinux2010_x86_64.whl", (False, {8}, None)),
         ("x-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl", (False, set(), None)),
         ("not-a-wheel.whl", (False, set(), None)),
     ],
@@ -347,3 +366,100 @@ def test_project_status_is_flagged() -> None:
         **{"project-status": {"status": "active"}},
     )
     assert "status" not in reduce_simple(active)
+
+
+# ----------------------------------------------------------------- shared dependencies
+
+
+def project(name: str, versions: list[str]) -> PypiIndex:
+    files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions]
+    return reduce_simple({**simple(files, versions), "name": name})
+
+
+def test_shared_requirements_and_conflict() -> None:
+    picks = {
+        "a": Pick(parse_spec("a"), "2.0", project("a", ["2.0"])),
+        "b": Pick(parse_spec("b[x]"), "1.0", project("b", ["1.0"])),
+    }
+    metas: dict[str, Any] = {
+        "a": {"requires_dist": ["c<2", "c>=1; python_version >= '3.10'", "d>=1", "b"]},
+        "b": {"requires_dist": ["c>=2; extra == 'x'", "d>=2", "e<3; sys_platform == 'win32'"]},
+    }
+    shared = shared_requirements(picks, metas, marker_env(PY315))
+    # d: lower bounds only (always meet at the newest release); e: marker off; b: requested.
+    assert {name: [(p.name, str(s)) for p, s in c] for name, c in shared.items()} == {
+        "c": [("a", "<2,>=1"), ("b", ">=2")]
+    }
+    issues = check_shared(shared, {"c": project("c", ["1.5", "2.1"])})
+    assert issues == [
+        (
+            {
+                "kind": "shared",
+                "ecosystem": "pypi",
+                "package": "c",
+                "required_by": "a==2.0, b==1.0",
+                "message": "no stable c satisfies a==2.0 (<2,>=1) and b==1.0 (>=2)",
+            },
+            "c",
+        )
+    ]
+    assert check_shared(shared, {"c": project("c", ["1.5", "2.0", "1.9"])}) == [
+        (issues[0][0], "c")
+    ]  # 2.0 is not <2
+    assert check_shared(shared, {}) == []  # unknown: never a false conflict
+
+
+async def test_shared_conflict_end_to_end_with_alternative() -> None:
+    requires = {"a/2.0": ["c<2"], "a/1.0": ["c>=1"], "b/1.0": ["c>=2"]}
+    versions = {"a": ["1.0", "2.0"], "b": ["1.0"], "c": ["1.0", "2.0"]}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        parts = request.url.path.strip("/").split("/")
+        if parts[0] == "simple":
+            name = parts[1]
+            files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions[name]]
+            return httpx2.Response(200, json={**simple(files, versions[name]), "name": name})
+        info = {"requires_dist": requires[f"{parts[1]}/{parts[2]}"], "requires_python": None}
+        return httpx2.Response(200, json={"info": info})
+
+    http = mock_http(handler)
+    result = await check_pypi(Fetcher(http, Cache(None)), ["a", "b"], PY315)
+    assert result.picks == {"a": "2.0", "b": "1.0"}
+    assert result.issues == [
+        {
+            "kind": "shared",
+            "ecosystem": "pypi",
+            "package": "c",
+            "required_by": "a==2.0, b==1.0",
+            "message": "no stable c satisfies a==2.0 (<2) and b==1.0 (>=2)",
+            "alternative": {"a": "1.0"},
+        }
+    ]
+    await http.aclose()
+
+
+async def test_shared_alternative_prefers_the_smallest_step_back() -> None:
+    requires = {
+        "a/1.0": ["c>=1"],  # old and permissive: two releases back
+        "a/2.0": ["c<2"],
+        "a/3.0": ["c<2"],
+        "a/4.0": ["c<2"],
+        "b/1.0": [],  # one step back, and dropped c: a fix too (uv agrees)
+        "b/2.0": ["c>=2"],
+    }
+    versions = {"a": ["1.0", "2.0", "3.0", "4.0"], "b": ["1.0", "2.0"], "c": ["1.0", "2.0"]}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        parts = request.url.path.strip("/").split("/")
+        if parts[0] == "simple":
+            name = parts[1]
+            files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions[name]]
+            return httpx2.Response(200, json={**simple(files, versions[name]), "name": name})
+        info = {"requires_dist": requires[f"{parts[1]}/{parts[2]}"], "requires_python": None}
+        return httpx2.Response(200, json={"info": info})
+
+    http = mock_http(handler)
+    result = await check_pypi(Fetcher(http, Cache(None)), ["a", "b"], PY315)
+    assert [i["kind"] for i in result.issues] == ["shared"]
+    assert result.issues[0]["alternative"] == {"b": "1.0"}
+    await http.aclose()

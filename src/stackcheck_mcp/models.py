@@ -23,6 +23,7 @@ IssueKind = Literal[
     "deprecated",
     "yanked",
     "unsatisfiable",  # the user's own constraint matches no stable version
+    "shared",  # requested packages need incompatible versions of an unrequested one
     "resolver",  # a real resolver rejected the set (--resolver-validation)
 ]
 
@@ -36,8 +37,8 @@ class Issue(TypedDict):
     required_by: NotRequired[str]
     range: NotRequired[str]
     target: NotRequired[str]
-    suggestion: NotRequired[dict[str, str]]
-    alternative: NotRequired[dict[str, str]]
+    suggestion: NotRequired[dict[str, str]]  # another version of the flagged package
+    alternative: NotRequired[dict[str, str]]  # a version of the required_by package
     severity: NotRequired[Literal["warn"]]  # absent means error
     message: NotRequired[str]
 
@@ -69,6 +70,7 @@ class StackResult(TypedDict):
     runtimes: NotRequired[dict[str, RuntimeInfo]]
     issues: NotRequired[list[Issue]]
     errors: NotRequired[dict[str, dict[str, str]]]
+    warnings: NotRequired[dict[str, dict[str, str]]]  # {"targets": {kind: why}}
     validation: NotRequired[dict[str, ValidationStatus]]
     stale: NotRequired[bool]
 

@@ -10,6 +10,7 @@ in ``meta`` and referenced by index, which keeps ``vite``/``vitest`` at a few KB
 """
 
 import asyncio
+import contextlib
 import json
 import re
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from stackcheck_mcp.semver_utils import (
 REGISTRY = "https://registry.npmjs.org"
 ABBREVIATED = "application/vnd.npm.install-v1+json"
 _NAME = re.compile(r"^(?:@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*$", re.IGNORECASE)
+_DIST_TAG = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 
 
 class NpmVersion(TypedDict):
@@ -72,7 +74,14 @@ def parse_spec(spec: str) -> NpmSpec:
     at = text.rfind("@")
     name, rng = (text[:at], text[at + 1 :].strip()) if at > 0 else (text, "")
     validate_name(name)
+    if rng == "latest":  # what agents write most; the latest stable is the default anyway
+        rng = ""
     if rng and not is_evaluable(rng):
+        if _DIST_TAG.match(rng):
+            raise ValueError(
+                f"dist-tag {rng!r} not supported (only 'latest': other tags usually point "
+                "to pre-releases); use a semver range"
+            )
         raise ValueError(f"invalid version range {rng!r}")
     return NpmSpec(name, rng or None)
 
@@ -238,7 +247,7 @@ def check_engines(picks: dict[str, Pick], node: str) -> list[Issue]:
                 continue
             declared = version_info(item.doc, version).get("engines", {}).get("node")
             if declared is None or satisfies(node, declared) is not False:
-                issue["alternative"] = {item.name: version}
+                issue["suggestion"] = {item.name: version}
                 break
         issues.append(issue)
     return issues
@@ -264,6 +273,73 @@ def check_deprecated(picks: dict[str, Pick]) -> list[Issue]:
                 break
         issues.append(issue)
     return issues
+
+
+def shared_peers(picks: dict[str, Pick]) -> dict[str, list[tuple[Pick, str]]]:
+    """Required peer ranges on a package nobody requested, declared by two or more picks.
+
+    npm installs one copy of that peer for all of them, so the ranges must intersect.
+    Optional peers are not installed unless requested: they never count here.
+    """
+    found: dict[str, list[tuple[Pick, str]]] = {}
+    for source in picks.values():
+        optional = set(source.info.get("optional", []))
+        for name, spec in source.info.get("peer", {}).items():
+            if name not in picks and name not in optional and is_evaluable(spec):
+                found.setdefault(name, []).append((source, spec))
+    return {name: found[name] for name in sorted(found) if len(found[name]) > 1}
+
+
+def check_shared(shared: dict[str, list[tuple[Pick, str]]], docs: dict[str, NpmDoc]) -> list[Issue]:
+    """``shared`` issues: no stable version of the shared peer satisfies every range."""
+    issues: list[Issue] = []
+    for name, constraints in shared.items():
+        doc = docs.get(name)
+        if doc is None:  # could not be fetched: unknown, never a false conflict
+            continue
+        versions = list(doc["versions"])  # npm may install a peer above `latest`
+        if highest_satisfying(versions, [spec for _, spec in constraints]):
+            continue
+        issue: Issue = {
+            "kind": "shared",
+            "ecosystem": "npm",
+            "package": name,
+            "required_by": ", ".join(source.label for source, _ in constraints),
+            "message": f"no stable {name} satisfies "
+            + " and ".join(f"{source.label} ({spec})" for source, spec in constraints),
+        }
+        if alternative := _shared_alternative(name, constraints, versions):
+            issue["alternative"] = alternative
+        issues.append(issue)
+    return issues
+
+
+def _shared_alternative(
+    name: str, constraints: list[tuple[Pick, str]], versions: list[str]
+) -> dict[str, str] | None:
+    """A version of one constraining pick whose peer range on ``name`` leaves a stable
+    version that satisfies everyone else.
+
+    Each pick's highest such version is a candidate, and the one that steps back over
+    the fewest releases wins. Otherwise eslint-config-airbnb 5.0.0 (2015, ``eslint:
+    >=1.0.0``) would beat eslint-plugin-unicorn 56.0.1 (``>=8.56.0``).
+    """
+    best: tuple[int, str, str] | None = None  # (releases skipped, package, version)
+    for source, _ in constraints:
+        others = [spec for other, spec in constraints if other is not source]
+        older = [
+            v
+            for v in reversed(candidates(source.doc))
+            if v != source.version and (not source.range or satisfies(v, source.range))
+        ]
+        for skipped, version in enumerate(older):
+            own = version_info(source.doc, version).get("peer", {}).get(name)
+            ranges = [*others, own] if own is not None and is_evaluable(own) else others
+            if highest_satisfying(versions, ranges):
+                if best is None or skipped < best[0]:
+                    best = (skipped, source.name, version)
+                break
+    return {best[1]: best[2]} if best else None
 
 
 def decide(
@@ -303,8 +379,8 @@ def decide(
 
 async def fetch_doc(fetcher: Fetcher, name: str) -> NpmDoc:
     async def load() -> NpmDoc:
-        raw = await fetcher.http.get_json(package_url(name), headers={"Accept": ABBREVIATED})
-        return reduce_doc(raw)
+        url = package_url(name)
+        return await fetcher.http.get_json(url, {"Accept": ABBREVIATED}, reduce_doc)
 
     return cast(NpmDoc, await fetcher.cached("npm", name, load))
 
@@ -338,6 +414,15 @@ async def check_npm(fetcher: Fetcher, raw_specs: list[str], node: str | None) ->
     await asyncio.gather(*(load(spec) for spec in specs))
     found = [spec for spec in specs if spec.name in docs]
     picks, issues, errors = decide(found, docs, node)
+    shared = shared_peers(picks)
+    shared_docs: dict[str, NpmDoc] = {}
+
+    async def load_shared(name: str) -> None:
+        with contextlib.suppress(FetchError, ValueError):
+            shared_docs[name] = await fetch_doc(fetcher, name)
+
+    await asyncio.gather(*(load_shared(name) for name in shared))
+    issues += check_shared(shared, shared_docs)
     result.errors.update(errors)
     result.picks = {name: item.version for name, item in picks.items()}
     result.issues = issues

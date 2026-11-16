@@ -5,9 +5,11 @@ from stackcheck_mcp.cache import Cache, Fetcher
 from stackcheck_mcp.maven import (
     check_maven,
     interpolate,
+    is_date_version,
     java_major,
     managed_versions,
     parse_spec,
+    pick,
     reduce_metadata,
     reduce_pom,
 )
@@ -123,7 +125,7 @@ async def test_spring_boot_java_baseline(fetcher: Fetcher) -> None:
             "package": f"{WEB}:4.1.2",
             "range": ">=17",  # java.version of spring-boot-starter-parent 4.1.2
             "target": "java 11.0.29+7",
-            "alternative": {WEB: "2.7.18"},
+            "suggestion": {WEB: "2.7.18"},
         }
     ]
 
@@ -154,6 +156,27 @@ def test_metadata_filters_prereleases_and_ignores_release_tag() -> None:
         release="4.2.0-RC1",
     )
     assert reduce_metadata(xml) == {"versions": ["1.0.0.RELEASE", "4.1.2", "4.1.9", "4.1.10"]}
+
+
+def test_build_date_versions_are_not_picked_as_latest() -> None:
+    # commons-collections: Maven orders 20040616 above 3.2.2; 3.2.2 is the real latest.
+    meta = reduce_metadata(metadata("1.0", "3.1", "20031027.000000", "3.2.2", "20040616"))
+    assert pick(meta) == "3.2.2"
+    assert pick(meta, parse_spec("commons-collections:commons-collections:[3.0,3.2)")) == "3.1"
+    # Asked for explicitly, or nothing else exists: still a valid answer.
+    assert pick(meta, parse_spec("commons-collections:commons-collections:20040616")) == (
+        "20040616"
+    )
+    assert pick(reduce_metadata(metadata("20040616"))) == "20040616"
+    assert not is_date_version("2026.0.2") and not is_date_version("4.2.19.Final")
+
+
+async def test_unsatisfiable_message_names_the_real_latest() -> None:
+    fake = central({"commons-collections:commons-collections": metadata("3.2.2", "20040616")})
+    result = await check_maven(fake, ["commons-collections:commons-collections:[4,)"], None, None)
+    assert result.issues[0]["message"] == "no stable version matches; latest is 3.2.2"
+    result = await check_maven(fake, ["commons-collections:commons-collections"], None, None)
+    assert result.picks == {"commons-collections:commons-collections": "3.2.2"}
 
 
 def test_parse_spec() -> None:

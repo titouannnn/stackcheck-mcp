@@ -4,6 +4,8 @@ Tool descriptions are loaded into every client's context: keep them short. Resul
 returned as compact JSON text plus validated ``structuredContent``.
 """
 
+import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,10 +38,14 @@ def compact(result: Any) -> CallToolResult:
 def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
     @asynccontextmanager
     async def lifespan(_: MCPServer) -> AsyncIterator[None]:
+        # Best effort, off the event loop, at most once a day per cache directory.
+        prune = asyncio.ensure_future(asyncio.to_thread(app.cache.prune))
         try:
             yield
         finally:
             await app.aclose()
+            with contextlib.suppress(Exception):
+                await prune
 
     server: MCPServer = MCPServer(
         "stackcheck-mcp",
@@ -66,8 +72,8 @@ def build_server(app: stack.App, log_level: LogLevel = "WARNING") -> MCPServer:
             ),
         ],
     ) -> Annotated[CallToolResult, StackResult]:
-        """Latest stable versions plus every incompatibility between the packages (peer deps,
-        requires_dist, engines, requires_python, wheels, BOM), with indicative fixes. Example:
+        """Latest stable versions plus incompatibilities between the packages and their shared
+        deps (peer deps, requires_dist, engines, requires_python, wheels, BOM). Example:
         {"npm": ["react", "typescript", "typescript-eslint", "vite@^8"], "pypi": ["fastapi"]}
         """
         try:

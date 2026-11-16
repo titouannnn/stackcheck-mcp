@@ -1,5 +1,6 @@
 """Offline tests of the resolver-validation plumbing (no uv/npm is ever started here)."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -124,3 +125,47 @@ async def test_timeout_kills_the_process(tmp_path: Path) -> None:
         [sys.executable, "-c", "import time; time.sleep(30)"], cwd=tmp_path, time_limit=0.5
     )
     assert completed is None
+
+
+async def test_timeout_kills_the_whole_process_tree(tmp_path: Path) -> None:
+    """npm is a .cmd shim on Windows: killing only it would leave node running."""
+    import sys
+
+    beat = tmp_path / "beat"
+    grandchild = "; ".join(
+        [
+            "import time, pathlib",
+            f"p = pathlib.Path({str(beat)!r})",
+            "[(p.write_text(str(time.time())), time.sleep(0.05)) for _ in iter(int, 1)]",
+        ]
+    )
+    child = "; ".join(
+        [
+            "import subprocess, sys, time",
+            f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])",
+            "time.sleep(30)",
+        ]
+    )
+    # 3 s: plenty for the grandchild to start beating before the timeout.
+    completed = await validation.run([sys.executable, "-c", child], cwd=tmp_path, time_limit=3)
+    assert completed is None and beat.exists()
+    await asyncio.sleep(0.5)
+    last = beat.read_text()
+    await asyncio.sleep(0.5)
+    assert beat.read_text() == last, "the grandchild survived the timeout"
+
+
+async def test_resolvers_use_the_public_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    async def fake_run(command: list[str], **kwargs: Any) -> Completed:
+        commands.append(command)
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(validation.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(validation, "run", fake_run)
+    await validation.validate_npm(["react@19.3.1"], 5)
+    await validation.validate_pypi(["fastapi==0.162.0"], ["fastapi"], "3.15.2", 5)
+    npm, uv, _ = commands
+    assert npm[npm.index("--registry") + 1] == "https://registry.npmjs.org/"
+    assert "--no-config" in uv and uv[uv.index("--default-index") + 1] == "https://pypi.org/simple"

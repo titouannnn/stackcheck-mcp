@@ -160,11 +160,18 @@ async def test_runtime_infos_partial_failure(fetcher: Fetcher) -> None:
 
 
 async def test_resolve_targets(fetcher: Fetcher) -> None:
-    resolved, errors = await resolve_targets(
+    resolved, errors, warnings = await resolve_targets(
         fetcher, {"node": None, "python": "3.14", "java": "1"}, TODAY
     )
     assert resolved == {"node": "24.22.1", "python": "3.14.10"}
     assert "unknown java version" in errors["java"]
+    assert warnings == {}  # defaults and 3.14 are maintained
+    resolved, errors, warnings = await resolve_targets(
+        fetcher, {"node": "18", "python": "3.9.1"}, TODAY
+    )
+    assert set(resolved) == {"node", "python"} and errors == {}
+    assert warnings["node"] == "18 is end-of-life since 2025-04-30"
+    assert warnings["python"].startswith("3.9 is end-of-life since 2025-")
 
 
 def test_suggest_slugs() -> None:
@@ -180,6 +187,18 @@ def test_suggest_slugs() -> None:
     assert suggest_slugs("temurin-jdk", products)[0] == "eclipse-temurin"
     assert len(suggest_slugs("p", products)) <= 3
     assert suggest_slugs("zzzzzzzzzzzz", products) == []
+    jira = [
+        {"name": "jira-software", "aliases": ["jira"]},
+        {"name": "alibaba-ack", "aliases": ["ack"]},
+    ]
+    assert suggest_slugs("java", products + jira) == []  # 2 edits from "jira": too far
+    assert suggest_slugs("django", [{"name": "go", "aliases": []}]) == []  # no 2-letter match
+
+
+async def test_target_names_work_as_runtime_slugs(fetcher: Fetcher) -> None:
+    infos, errors = await runtime_infos(fetcher, ["java", "node"], TODAY)
+    assert errors == {}
+    assert infos["java"]["lts"] == "25.0.5+8" and infos["node"]["lts"] == "24.22.1"
 
 
 async def test_unknown_slug_suggests_from_product_list(tmp_path: object) -> None:
