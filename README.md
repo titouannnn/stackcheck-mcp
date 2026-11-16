@@ -270,6 +270,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy --strict src/
 uv run python scripts/record_fixtures.py   # refresh tests/fixtures/cache from the registries
 uv run python scripts/reference_run.py     # reference stack, live, with timings
+uv run python scripts/sweep.py --npm 1000 --pypi 1000   # picks vs registry truth, top packages
 ```
 
 The differential tests are the main correctness guarantee. For each stack they cover, a set
