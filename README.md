@@ -103,7 +103,7 @@ entries.
   Node = active maintained LTS, Python = newest released maintained cycle, Java = latest LTS of
   `eclipse-temurin`. A target is resolved (and shown) only when an ecosystem needs it.
 
-Answer for the reference stack (the [spec](docs/SPEC.md) §9 stack, live on 2026-10-27, 963
+Answer for the reference stack (the [spec](https://github.com/titouannnn/stackcheck-mcp/blob/main/docs/SPEC.md) §9 stack, live on 2026-10-27, 963
 bytes):
 
 ```json
@@ -276,8 +276,8 @@ uv run python scripts/sweep.py --npm 1000 --pypi 1000   # picks vs registry trut
 The differential tests are the main correctness guarantee. For each stack they cover, a set
 `check_stack` calls issue-free must resolve with `uv pip compile` / `npm install
 --package-lock-only`, and every `peer`/`requires`/`shared` conflict it reports must be
-rejected by them. See [AGENTS.md](AGENTS.md)
-for the project's invariants and [docs/PLAN.md](docs/PLAN.md) for verified facts and
+rejected by them. See [AGENTS.md](https://github.com/titouannnn/stackcheck-mcp/blob/main/AGENTS.md)
+for the project's invariants and [docs/PLAN.md](https://github.com/titouannnn/stackcheck-mcp/blob/main/docs/PLAN.md) for verified facts and
 deviations from the original spec.
 
 ## License
