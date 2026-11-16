@@ -1,6 +1,7 @@
 """Command line entry point: ``stackcheck-mcp [--http] [--resolver-validation]``."""
 
 import argparse
+import ipaddress
 import logging
 import sys
 from typing import cast
@@ -21,6 +22,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address")
     parser.add_argument("--port", type=int, default=8000, help="HTTP port")
     parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="allow a non-loopback --host (no authentication: put a proxy in front)",
+    )
+    parser.add_argument(
         "--resolver-validation",
         action="store_true",
         help="also validate picks with real resolvers (uv pip compile, npm --package-lock-only)",
@@ -36,7 +42,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--log-level", default="WARNING", type=str.upper, choices=LEVELS)
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.http and not args.allow_remote and not is_loopback(args.host):
+        parser.error(
+            f"--host {args.host} would expose an unauthenticated server beyond this machine; "
+            "pass --allow-remote if an authenticating proxy sits in front of it"
+        )
+    return args
+
+
+def is_loopback(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:  # any other host name may resolve to a public address
+        return False
 
 
 def main(argv: list[str] | None = None) -> None:

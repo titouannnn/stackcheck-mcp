@@ -48,6 +48,12 @@ Streamable HTTP instead of stdio:
 uvx stackcheck-mcp --http --host 127.0.0.1 --port 8000   # endpoint: http://127.0.0.1:8000/mcp
 ```
 
+The HTTP server has **no authentication**. On a loopback address the MCP SDK also rejects
+requests whose `Host`/`Origin` is not local (DNS rebinding protection). Any other `--host`
+is refused unless you pass `--allow-remote`, which you should only do behind a proxy that
+authenticates clients; that also disables the rebinding protection, and with
+`--resolver-validation` every caller can make the server run `uv` and `npm`.
+
 Only `uv` is needed. Public registries only, no credentials.
 
 ### Options
@@ -55,7 +61,8 @@ Only `uv` is needed. Public registries only, no credentials.
 | Flag | Default | |
 |---|---|---|
 | `--http` | off (stdio) | serve streamable HTTP |
-| `--host`, `--port` | `127.0.0.1`, `8000` | HTTP bind address |
+| `--host`, `--port` | `127.0.0.1`, `8000` | HTTP bind address (loopback only, unless `--allow-remote`) |
+| `--allow-remote` | off | accept a non-loopback `--host` (no authentication: put an authenticating proxy in front) |
 | `--resolver-validation` | off | also check the picks with real resolvers (see below) |
 | `--resolver-timeout` | `120` | seconds per resolver run |
 | `--call-timeout` | `45` | seconds of registry work per tool call; past it, the answer is partial and the slow parts are in `errors` (fetches keep warming the cache) |
