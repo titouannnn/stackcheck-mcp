@@ -238,16 +238,21 @@ def levenshtein(a: str, b: str) -> int:
 
 
 def suggest_slugs(query: str, products: list[ProductRef], limit: int = 3) -> list[str]:
-    """Closest product slugs: substring matches first, then edit distance."""
+    """Closest product slugs: substring matches first, then small edit distances.
+
+    The distance allowed grows with the query (1 edit per 3 characters): ``java`` must
+    not suggest ``jira-software`` because of its alias ``jira``.
+    """
     scored: dict[str, tuple[int, int]] = {}
     for product in products:
         for candidate in [product["name"], *product["aliases"]]:
-            substring = 0 if query in candidate or candidate in query else 1
-            score = (substring, levenshtein(query, candidate))
+            contained = query in candidate or (len(candidate) >= 3 and candidate in query)
+            score = (0 if contained else 1, levenshtein(query, candidate))
             if product["name"] not in scored or score < scored[product["name"]]:
                 scored[product["name"]] = score
     ranked = sorted(scored.items(), key=lambda item: (item[1], item[0]))
-    return [name for name, (substring, dist) in ranked if substring == 0 or dist <= 4][:limit]
+    allowed = max(1, len(query) // 3)
+    return [name for name, (substring, dist) in ranked if substring == 0 or dist <= allowed][:limit]
 
 
 # --------------------------------------------------------------------------- fetch
@@ -285,9 +290,13 @@ async def _unknown_product_message(fetcher: Fetcher, slug: str) -> str:
 
 
 async def lookup_product(fetcher: Fetcher, slug: str) -> Product:
-    """Fetch a product, turning a 404 into a ``ValueError`` with slug suggestions."""
+    """Fetch a product, turning a 404 into a ``ValueError`` with slug suggestions.
+
+    The target names (``node``, ``python``, ``java``) work as slugs too.
+    """
     try:
-        return await fetch_product(fetcher, normalize_slug(slug))
+        name = normalize_slug(slug)
+        return await fetch_product(fetcher, TARGET_SLUGS.get(name, name))
     except NotFoundError:
         raise ValueError(await _unknown_product_message(fetcher, slug.strip().lower())) from None
 

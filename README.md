@@ -98,7 +98,7 @@ entries.
 - PyPI: PEP 508 with extras (`uvicorn[standard]>=0.30`); URLs and markers are rejected.
 - Maven: `groupId:artifactId[:version|range]`, e.g. `[3.5,4.0)`. A plain version is exact.
 - `maven_bom`: a BOM to align against (`groupId:artifactId[:version|range]`, latest by default).
-- `runtimes`: any [endoflife.date](https://endoflife.date) slug (aliases like `node` work).
+- `runtimes`: any [endoflife.date](https://endoflife.date) slug (aliases like `node` work; `java` means `eclipse-temurin`, like the Java target).
 - `targets`: a cycle (`"24"`, `"3.14"`), a prefix (`"3"`) or an exact version. Defaults:
   Node = active maintained LTS, Python = newest released maintained cycle, Java = latest LTS of
   `eclipse-temurin`. A target is resolved (and shown) only when an ecosystem needs it.
