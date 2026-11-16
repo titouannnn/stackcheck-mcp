@@ -84,6 +84,7 @@ Only `uv` is needed. Public registries only, no credentials.
 All fields are optional, but at least one list is required.
 
 - npm: `name` or `name@range` (`@types/react@^19`: the range follows the last `@`).
+  `name@latest` means the latest stable; other dist-tags (`next`, `canary`, …) are rejected.
 - PyPI: PEP 508 with extras (`uvicorn[standard]>=0.30`); URLs and markers are rejected.
 - Maven: `groupId:artifactId[:version|range]`, e.g. `[3.5,4.0)`. A plain version is exact.
 - `maven_bom`: a BOM to align against (`groupId:artifactId[:version|range]`, latest by default).

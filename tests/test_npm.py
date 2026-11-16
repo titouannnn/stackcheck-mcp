@@ -154,6 +154,12 @@ def test_parse_spec() -> None:
     assert parse_spec(" vite@^8 ") == NpmSpec("vite", "^8")
     assert parse_spec("react@") == NpmSpec("react")
     assert parse_spec("typescript@>=5 <7") == NpmSpec("typescript", ">=5 <7")
+    assert parse_spec("react@latest") == NpmSpec("react")
+    assert parse_spec("@types/react@latest") == NpmSpec("@types/react")
+    with pytest.raises(ValueError, match="dist-tag 'next' not supported"):
+        parse_spec("react@next")
+    with pytest.raises(ValueError, match="invalid version range"):
+        parse_spec("react@!!garbage")
     for bad in ["bad name", "../etc", "@scope/a/b", "a\\b", "x\ny", "", "@/x", "react@npm:foo@1"]:
         with pytest.raises(ValueError):
             parse_spec(bad)

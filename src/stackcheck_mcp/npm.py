@@ -31,6 +31,7 @@ from stackcheck_mcp.semver_utils import (
 REGISTRY = "https://registry.npmjs.org"
 ABBREVIATED = "application/vnd.npm.install-v1+json"
 _NAME = re.compile(r"^(?:@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*$", re.IGNORECASE)
+_DIST_TAG = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 
 
 class NpmVersion(TypedDict):
@@ -72,7 +73,14 @@ def parse_spec(spec: str) -> NpmSpec:
     at = text.rfind("@")
     name, rng = (text[:at], text[at + 1 :].strip()) if at > 0 else (text, "")
     validate_name(name)
+    if rng == "latest":  # what agents write most; the latest stable is the default anyway
+        rng = ""
     if rng and not is_evaluable(rng):
+        if _DIST_TAG.match(rng):
+            raise ValueError(
+                f"dist-tag {rng!r} not supported (only 'latest': other tags usually point "
+                "to pre-releases); use a semver range"
+            )
         raise ValueError(f"invalid version range {rng!r}")
     return NpmSpec(name, rng or None)
 
