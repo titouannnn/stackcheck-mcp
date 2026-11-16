@@ -262,7 +262,7 @@ Measured for the reference stack: cold (empty cache) 1.6 s, warm 60–80 ms.
 ## Development
 
 ```bash
-uv sync --all-extras
+uv sync
 uv run pytest                  # offline, deterministic (recorded fixtures, frozen dates)
 uv run pytest -m live          # live registries, asserts properties
 uv run pytest -m resolvers     # differential tests vs real uv/npm (needs node + uv)

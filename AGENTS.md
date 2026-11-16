@@ -9,7 +9,7 @@ An open-source (Apache-2.0) Python MCP server. Given lists of npm / PyPI / Maven
 ## Commands
 
 ```bash
-uv sync --all-extras                      # set up the environment
+uv sync                                   # set up the environment (dev group included)
 uv run pytest                             # offline unit + integration tests (default, must stay green)
 uv run pytest -m live                     # live registry tests (network; assert properties, not exact versions)
 uv run pytest -m resolvers                # differential tests vs real uv/npm (needs node + uv on PATH)
