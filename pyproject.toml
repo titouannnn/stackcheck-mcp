@@ -48,7 +48,10 @@ dev = [
 ]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "README.md", "CHANGELOG.md", "LICENSE", "server.json"]
+include = [
+    "src", "tests", "docs", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
+    "LICENSE", "server.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
