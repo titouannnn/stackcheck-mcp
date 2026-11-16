@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.OWNER/stackcheck-mcp",
+  "name": "io.github.titouannnn/stackcheck-mcp",
   "title": "stackcheck",
   "description": "Latest stable npm/PyPI/Maven versions plus the incompatibilities between them.",
   "repository": {
-    "url": "https://github.com/OWNER/stackcheck-mcp",
+    "url": "https://github.com/titouannnn/stackcheck-mcp",
     "source": "github"
   },
   "version": "0.1.0",

@@ -4,7 +4,7 @@ An MCP server that gives coding agents the **latest stable version** of every np
 Maven package in a stack, **and every incompatibility between them**, in one call and a few
 hundred tokens of JSON.
 
-<!-- mcp-name: io.github.OWNER/stackcheck-mcp -->
+<!-- mcp-name: io.github.titouannnn/stackcheck-mcp -->
 
 ## Why
 
