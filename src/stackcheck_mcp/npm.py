@@ -317,18 +317,29 @@ def check_shared(shared: dict[str, list[tuple[Pick, str]]], docs: dict[str, NpmD
 def _shared_alternative(
     name: str, constraints: list[tuple[Pick, str]], versions: list[str]
 ) -> dict[str, str] | None:
-    """Highest version of one constraining pick whose peer range (if any) on ``name``
-    leaves a stable version that satisfies everyone else."""
+    """A version of one constraining pick whose peer range on ``name`` leaves a stable
+    version that satisfies everyone else.
+
+    Each pick's highest such version is a candidate, and the one that steps back over
+    the fewest releases wins. Otherwise eslint-config-airbnb 5.0.0 (2015, ``eslint:
+    >=1.0.0``) would beat eslint-plugin-unicorn 56.0.1 (``>=8.56.0``).
+    """
+    best: tuple[int, str, str] | None = None  # (releases skipped, package, version)
     for source, _ in constraints:
         others = [spec for other, spec in constraints if other is not source]
-        for version in reversed(candidates(source.doc)):
-            if version == source.version or (source.range and not satisfies(version, source.range)):
-                continue
+        older = [
+            v
+            for v in reversed(candidates(source.doc))
+            if v != source.version and (not source.range or satisfies(v, source.range))
+        ]
+        for skipped, version in enumerate(older):
             own = version_info(source.doc, version).get("peer", {}).get(name)
-            ranges = others + ([own] if own is not None and is_evaluable(own) else [])
+            ranges = [*others, own] if own is not None and is_evaluable(own) else others
             if highest_satisfying(versions, ranges):
-                return {source.name: version}
-    return None
+                if best is None or skipped < best[0]:
+                    best = (skipped, source.name, version)
+                break
+    return {best[1]: best[2]} if best else None
 
 
 def decide(

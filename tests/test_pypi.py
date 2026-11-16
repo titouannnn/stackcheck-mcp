@@ -436,3 +436,30 @@ async def test_shared_conflict_end_to_end_with_alternative() -> None:
         }
     ]
     await http.aclose()
+
+
+async def test_shared_alternative_prefers_the_smallest_step_back() -> None:
+    requires = {
+        "a/1.0": ["c>=1"],  # old and permissive: two releases back
+        "a/2.0": ["c<2"],
+        "a/3.0": ["c<2"],
+        "a/4.0": ["c<2"],
+        "b/1.0": [],  # one step back, and dropped c: a fix too (uv agrees)
+        "b/2.0": ["c>=2"],
+    }
+    versions = {"a": ["1.0", "2.0", "3.0", "4.0"], "b": ["1.0", "2.0"], "c": ["1.0", "2.0"]}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        parts = request.url.path.strip("/").split("/")
+        if parts[0] == "simple":
+            name = parts[1]
+            files = [{"filename": f"{name}-{v}-py3-none-any.whl"} for v in versions[name]]
+            return httpx2.Response(200, json={**simple(files, versions[name]), "name": name})
+        info = {"requires_dist": requires[f"{parts[1]}/{parts[2]}"], "requires_python": None}
+        return httpx2.Response(200, json={"info": info})
+
+    http = mock_http(handler)
+    result = await check_pypi(Fetcher(http, Cache(None)), ["a", "b"], PY315)
+    assert [i["kind"] for i in result.issues] == ["shared"]
+    assert result.issues[0]["alternative"] == {"b": "1.0"}
+    await http.aclose()

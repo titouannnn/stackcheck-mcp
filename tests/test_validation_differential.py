@@ -60,6 +60,17 @@ def named(issue: Issue) -> list[str]:
     return [issue["package"], issue["required_by"]]
 
 
+def with_alternative(issue: Issue, separator: str) -> list[str] | None:
+    """The pins of a ``shared`` conflict once its ``alternative`` is applied."""
+    if issue["kind"] != "shared" or "alternative" not in issue:
+        return None
+    ((name, version),) = issue["alternative"].items()
+    return [
+        f"{name}{separator}{version}" if pin.rsplit(separator, 1)[0] == name else pin
+        for pin in named(issue)
+    ]
+
+
 @pytest.mark.parametrize("specs", NPM_STACKS, ids=lambda s: "+".join(s)[:60])
 async def test_npm_agrees_with_npm_install(app: stack.App, specs: list[str]) -> None:
     result = await stack.check_stack(app, npm_specs=specs)
@@ -74,6 +85,8 @@ async def test_npm_agrees_with_npm_install(app: stack.App, specs: list[str]) -> 
         rejected = await validation.validate_npm(named(issue), TIME_LIMIT)
         assert rejected.status == "failed", issue
         assert outcome.status == "failed"
+        if fixed := with_alternative(issue, "@"):  # the indicative fix must resolve
+            assert (await validation.validate_npm(fixed, TIME_LIMIT)).status == "ok", fixed
 
 
 @pytest.mark.parametrize("specs", PYPI_STACKS, ids=lambda s: "+".join(s)[:60])
@@ -92,6 +105,9 @@ async def test_pypi_agrees_with_uv(app: stack.App, specs: list[str]) -> None:
         rejected = await validation.validate_pypi(pinned, pinned, python, TIME_LIMIT)
         assert rejected.status == "failed", issue
         assert outcome.status == "failed"
+        if fixed := with_alternative(issue, "=="):  # the indicative fix must resolve
+            accepted = await validation.validate_pypi(fixed, fixed, python, TIME_LIMIT)
+            assert accepted.status == "ok", fixed
 
 
 async def test_unpinned_uv_choice_matches_our_pick(app: stack.App) -> None:

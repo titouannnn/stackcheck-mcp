@@ -561,8 +561,9 @@ async def fetch_meta(fetcher: Fetcher, name: str, version: str) -> PypiMeta:
 
 async def _older_version(
     fetcher: Fetcher, source: Pick, accept: Callable[[PypiMeta], bool]
-) -> str | None:
-    """Highest other stable, non-yanked version of ``source`` whose metadata ``accept``s."""
+) -> tuple[int, str] | None:
+    """Highest other stable, non-yanked version of ``source`` whose metadata ``accept``s,
+    with the number of releases skipped to reach it."""
     versions = [
         v
         for v in reversed(candidates(source.index, source.spec.specifier))
@@ -573,9 +574,9 @@ async def _older_version(
         metas = await asyncio.gather(
             *(fetch_meta(fetcher, source.name, v) for v in batch), return_exceptions=True
         )
-        for version, meta in zip(batch, metas, strict=True):
+        for offset, (version, meta) in enumerate(zip(batch, metas, strict=True)):
             if not isinstance(meta, BaseException) and accept(meta):
-                return version
+                return start + offset, version
     return None
 
 
@@ -589,7 +590,8 @@ async def find_alternative(
         specs = requirements_on(meta, constrained.name, env, source.spec.extras)
         return bool(specs) and all(s.contains(constrained.version, prereleases=True) for s in specs)
 
-    return await _older_version(fetcher, source, accept)
+    found = await _older_version(fetcher, source, accept)
+    return found[1] if found else None
 
 
 # --------------------------------------------------------------------------- shared deps
@@ -667,20 +669,25 @@ async def find_shared_alternative(
     index: PypiIndex,
     env: dict[str, str],
 ) -> dict[str, str] | None:
-    """Highest version of one constraining pick that lets the shared project resolve."""
+    """A version of one constraining pick that lets the shared project resolve: of each
+    pick's highest such version, the one that skips the fewest releases."""
     name = index["name"]
+    best: tuple[int, str, str] | None = None
     for source, _ in constraints:
         others = [spec for other, spec in constraints if other is not source]
 
         def accept(
             meta: PypiMeta, source: Pick = source, others: list[SpecifierSet] = others
         ) -> bool:
+            # A release that no longer depends on it at all is a fix too (uv agrees:
+            # sse-starlette 3.0.3 dropped starlette).
             own = requirements_on(meta, name, env, source.spec.extras)
             return satisfiable(index, others + own)
 
-        if version := await _older_version(fetcher, source, accept):
-            return {source.name: version}
-    return None
+        found = await _older_version(fetcher, source, accept)
+        if found and (best is None or found[0] < best[0]):
+            best = (found[0], source.name, found[1])
+    return {best[1]: best[2]} if best else None
 
 
 def parse_specs(raw_specs: list[str], errors: dict[str, str]) -> list[PypiSpec]:

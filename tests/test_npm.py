@@ -350,12 +350,14 @@ async def test_unpublished_package_is_reported_as_such() -> None:
 SHARED_DOCS = {
     "config": doc(
         {
+            "0.1.0": {},  # no peer: resolves, but further back than plugin 1.0.0
             "1.0.0": {"peerDependencies": {"eslint": "^8"}},
             "2.0.0": {"peerDependencies": {"eslint": "^8"}},
         }
     ),
     "plugin": doc(
         {
+            "0.1.0": {},  # no peer: resolves too, but older than 1.0.0
             "1.0.0": {"peerDependencies": {"eslint": "^8 || ^9"}},
             "2.0.0": {"peerDependencies": {"eslint": ">=9"}},
         }
@@ -414,3 +416,25 @@ async def test_shared_peer_is_fetched_and_checked() -> None:
     assert [(i["kind"], i["package"]) for i in result.issues] == [("shared", "eslint")]
     assert "eslint" not in result.picks  # not requested: never answered
     await http.aclose()
+
+
+def test_shared_alternative_prefers_the_smallest_step_back() -> None:
+    # Real shape: eslint-config-airbnb 5.0.0 (2015) declares eslint >=1.0.0, while
+    # eslint-plugin-unicorn 56.0.1 accepts eslint 8. The plugin's step back is smaller.
+    docs = {
+        "old-config": doc(
+            {
+                "1.0.0": {"peerDependencies": {"host": ">=1"}},
+                **{f"{major}.0.0": {"peerDependencies": {"host": "^1"}} for major in range(2, 7)},
+            }
+        ),
+        "new-plugin": doc(
+            {
+                "9.0.0": {"peerDependencies": {"host": "^1 || ^2"}},
+                "10.0.0": {"peerDependencies": {"host": ">=2"}},
+            }
+        ),
+    }
+    picks, _, _ = decide([NpmSpec("old-config"), NpmSpec("new-plugin")], docs, None)
+    issues = check_shared(shared_peers(picks), {"host": doc({"1.0.0": {}, "2.0.0": {}})})
+    assert issues[0]["alternative"] == {"new-plugin": "9.0.0"}
