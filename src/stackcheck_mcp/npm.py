@@ -246,7 +246,7 @@ def check_engines(picks: dict[str, Pick], node: str) -> list[Issue]:
                 continue
             declared = version_info(item.doc, version).get("engines", {}).get("node")
             if declared is None or satisfies(node, declared) is not False:
-                issue["alternative"] = {item.name: version}
+                issue["suggestion"] = {item.name: version}
                 break
         issues.append(issue)
     return issues

@@ -170,8 +170,8 @@ Issue:
 | `required_by` | the package (or BOM) that declares the constraint |
 | `range` | the declared constraint |
 | `target` | the runtime target checked (`node 24.22.1`, `python 3.15.2`, `java 21.0.13+9`) |
-| `suggestion` | highest stable version of `package` that satisfies every constraint the other requested packages put on it, and your own constraint |
-| `alternative` | when there is no suggestion: highest stable version of the constraining package that accepts the picked one |
+| `suggestion` | another version of the flagged package: the highest stable one that fixes the issue (satisfies every constraint the other requested packages, the target or the BOM put on it, and your own range). `resolver` issues: uv's own choices |
+| `alternative` | only when there is no suggestion (`peer`, `requires`): highest stable version of the `required_by` package that accepts the picked one |
 | `severity` | `"warn"`; absent means error |
 | `message` | resolver output, deprecation or yank reason, … |
 

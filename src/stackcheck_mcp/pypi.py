@@ -444,7 +444,7 @@ def check_python(picks: dict[str, Pick], python: str) -> tuple[list[Issue], set[
         for version in reversed(candidates(item.index, item.spec.specifier)):
             info = version_info(item.index, version)
             if "yanked" not in info and python_ok(info.get("rp"), python) is not False:
-                issue["alternative"] = {item.name: version}
+                issue["suggestion"] = {item.name: version}
                 break
         issues.append(issue)
     return issues, failed

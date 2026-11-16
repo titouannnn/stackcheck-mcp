@@ -35,7 +35,7 @@ CENTRAL = "https://repo1.maven.org/maven2"
 BOM_DEPTH = 5
 SPRING_BOOT_GROUP = "org.springframework.boot"
 STARTER_PARENT = "spring-boot-starter-parent"
-JAVA_SCAN = 40  # Spring Boot minor lines inspected, newest first, for a Java `alternative`
+JAVA_SCAN = 40  # Spring Boot minor lines inspected, newest first, for a Java `suggestion`
 _ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 _PLACEHOLDER = re.compile(r"\$\{([^}]+)\}")
 # Early Apache artifacts were published under build dates (commons-collections 20040616,
@@ -335,8 +335,8 @@ async def check_java(fetcher: Fetcher, boot_versions: dict[str, str], java: str)
     if target is None:
         return []
     issues: list[Issue] = []
-    alternative: str | None = None
-    alternative_done = False
+    suggestion: str | None = None
+    looked_up = False
     for label, version in boot_versions.items():
         baseline = await java_baseline(fetcher, version)
         if baseline is None or baseline <= target:
@@ -348,11 +348,11 @@ async def check_java(fetcher: Fetcher, boot_versions: dict[str, str], java: str)
             "range": f">={baseline}",
             "target": f"java {java}",
         }
-        if not alternative_done:
-            alternative = await _boot_for_java(fetcher, target)
-            alternative_done = True
-        if alternative:
-            issue["alternative"] = {label.rsplit(":", 1)[0]: alternative}
+        if not looked_up:
+            suggestion = await _boot_for_java(fetcher, target)
+            looked_up = True
+        if suggestion:
+            issue["suggestion"] = {label.rsplit(":", 1)[0]: suggestion}
         issues.append(issue)
     return issues
 

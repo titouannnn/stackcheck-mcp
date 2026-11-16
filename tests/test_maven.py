@@ -125,7 +125,7 @@ async def test_spring_boot_java_baseline(fetcher: Fetcher) -> None:
             "package": f"{WEB}:4.1.2",
             "range": ">=17",  # java.version of spring-boot-starter-parent 4.1.2
             "target": "java 11.0.29+7",
-            "alternative": {WEB: "2.7.18"},
+            "suggestion": {WEB: "2.7.18"},
         }
     ]
 

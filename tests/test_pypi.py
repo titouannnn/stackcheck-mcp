@@ -113,8 +113,8 @@ async def test_python_target_too_old(fetcher: Fetcher) -> None:
     fastapi = by_package["fastapi==0.162.0"]
     assert fastapi["kind"] == "python" and fastapi["range"] == ">=3.10"
     assert fastapi["target"] == "python 3.9.25"
-    assert fastapi["alternative"] == {"fastapi": "0.128.8"}
-    assert by_package["sqlalchemy==2.1.6"]["alternative"] == {"sqlalchemy": "2.0.55"}
+    assert fastapi["suggestion"] == {"fastapi": "0.128.8"}
+    assert by_package["sqlalchemy==2.1.6"]["suggestion"] == {"sqlalchemy": "2.0.55"}
 
 
 async def test_wheels_for_future_python(fetcher: Fetcher) -> None:

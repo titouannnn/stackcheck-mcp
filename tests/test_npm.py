@@ -112,7 +112,7 @@ async def test_engines_against_old_node_target(fetcher: Fetcher) -> None:
     assert vite["range"] == "^20.19.0 || >=22.12.0"
     assert vite["target"] == "node 18.20.8"
     # 6.4.5 declares engines.node "^18.0.0 || ^20.0.0 || >=22.0.0".
-    assert vite["alternative"] == {"vite": "6.4.5"}
+    assert vite["suggestion"] == {"vite": "6.4.5"}
     assert "eslint@10.13.0" in by_package
     assert "react@19.3.1" not in by_package  # engines >=0.10.0
 

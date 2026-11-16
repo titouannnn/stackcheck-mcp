@@ -36,8 +36,8 @@ class Issue(TypedDict):
     required_by: NotRequired[str]
     range: NotRequired[str]
     target: NotRequired[str]
-    suggestion: NotRequired[dict[str, str]]
-    alternative: NotRequired[dict[str, str]]
+    suggestion: NotRequired[dict[str, str]]  # another version of the flagged package
+    alternative: NotRequired[dict[str, str]]  # a version of the required_by package
     severity: NotRequired[Literal["warn"]]  # absent means error
     message: NotRequired[str]
 
