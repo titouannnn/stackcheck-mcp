@@ -28,6 +28,11 @@
           "name": "STACKCHECK_CACHE_TTL",
           "description": "Cache TTL in seconds (default 21600, 0 disables the cache)",
           "isRequired": false
+        },
+        {
+          "name": "STACKCHECK_CACHE_MAX_AGE",
+          "description": "Days before an unused cache entry is deleted (default 60, 0 never prunes)",
+          "isRequired": false
         }
       ]
     }

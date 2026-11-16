@@ -262,3 +262,39 @@ async def test_large_bodies_are_parsed_off_the_event_loop() -> None:
     with pytest.raises(FetchError, match="invalid JSON"):
         bad = mock_http(lambda r: httpx2.Response(200, content=b"{" * (THREAD_THRESHOLD + 1)))
         await bad.get_json("https://registry.example/x", None, reduce)
+
+
+def test_prune_removes_unused_and_old_layout_entries(tmp_path: Path) -> None:
+    import os
+
+    cache = Cache(tmp_path, ttl=60, max_age=10 * 86400)
+    cache.put("npm", "used", {"v": 1})
+    cache.put("npm", "unused", {"v": 1})
+    cache.put("pypi-meta", "old==1.0", {"requires_dist": []})
+    old = time.time() - 30 * 86400
+    for key, namespace in (("unused", "npm"), ("old==1.0", "pypi-meta"), ("used", "npm")):
+        os.utime(cache._path(namespace, key), (old, old))
+    cache.touch("npm", "used")  # read since: kept
+    stale_layout = tmp_path / "v1" / "npm"
+    stale_layout.mkdir(parents=True)
+    (stale_layout / "react.json").write_text("{}")
+    unrelated = tmp_path / "v1" / "notes.txt"  # never ours: never deleted
+    unrelated.write_text("keep")
+    (tmp_path / "other").mkdir()
+
+    assert cache.prune() == 3
+    assert cache.get("npm", "used") is not None
+    assert cache.get("npm", "unused") is None and cache.get("pypi-meta", "old==1.0") is None
+    assert not stale_layout.exists() and unrelated.exists() and (tmp_path / "other").exists()
+    cache.put("npm", "unused", {"v": 1})
+    os.utime(cache._path("npm", "unused"), (old, old))
+    assert cache.prune() == 0  # at most once a day
+    assert Cache(tmp_path, ttl=60, max_age=0).prune() == 0  # disabled
+
+
+def test_max_age_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STACKCHECK_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("STACKCHECK_CACHE_MAX_AGE", "7")
+    assert Cache.from_env().max_age == 7 * 86400
+    monkeypatch.setenv("STACKCHECK_CACHE_MAX_AGE", "soon")
+    assert Cache.from_env().max_age == 60 * 86400

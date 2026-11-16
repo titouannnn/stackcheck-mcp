@@ -72,6 +72,7 @@ Only `uv` is needed. Public registries only, no credentials.
 |---|---|---|
 | `STACKCHECK_CACHE_DIR` | platform cache dir (`platformdirs`) | on-disk cache of reduced registry data |
 | `STACKCHECK_CACHE_TTL` | `21600` (6 h) | seconds; `0` disables the cache |
+| `STACKCHECK_CACHE_MAX_AGE` | `60` | days; entries unused for longer (and those of older cache layouts) are deleted at startup, at most once a day; `0` never prunes |
 | `HTTPS_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR` | | honoured (the OS trust store is used on Windows/macOS) |
 
 ## Tools

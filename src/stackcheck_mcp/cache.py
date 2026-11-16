@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
@@ -33,6 +34,11 @@ NOT_FOUND_TTL = 900.0
 _MISSING = "$missing"  # data of a remembered 404 (no reduced document has this key)
 # Bump whenever a reduced document's shape changes, so old entries are never misread.
 LAYOUT_VERSION = "v2"
+# Entries unused for this long are deleted (per-version documents never expire otherwise).
+DEFAULT_MAX_AGE_DAYS = 60.0
+DAY = 86400.0
+NAMESPACES = ("npm", "pypi", "pypi-meta", "maven", "maven-pom", "eol")
+_LAYOUT = re.compile(r"^v\d+$")
 
 
 @dataclass(frozen=True)
@@ -53,8 +59,14 @@ def entry_filename(key: str) -> str:
 
 
 class Cache:
-    def __init__(self, directory: Path | None, ttl: float = DEFAULT_TTL) -> None:
+    def __init__(
+        self,
+        directory: Path | None,
+        ttl: float = DEFAULT_TTL,
+        max_age: float = DEFAULT_MAX_AGE_DAYS * DAY,
+    ) -> None:
         self.ttl = ttl
+        self.max_age = max_age  # seconds; 0 never prunes
         self.enabled = directory is not None and ttl > 0
         self.root = directory / LAYOUT_VERSION if directory is not None else None
 
@@ -69,7 +81,13 @@ class Cache:
         except ValueError:
             log.warning("ignoring invalid STACKCHECK_CACHE_TTL=%r", raw_ttl)
             ttl = DEFAULT_TTL
-        return cls(Path(directory), ttl)
+        raw_age = os.environ.get("STACKCHECK_CACHE_MAX_AGE", "")
+        try:
+            days = float(raw_age) if raw_age.strip() else DEFAULT_MAX_AGE_DAYS
+        except ValueError:
+            log.warning("ignoring invalid STACKCHECK_CACHE_MAX_AGE=%r", raw_age)
+            days = DEFAULT_MAX_AGE_DAYS
+        return cls(Path(directory), ttl, days * DAY)
 
     def _path(self, namespace: str, key: str) -> Path:
         assert self.root is not None
@@ -94,6 +112,63 @@ class Cache:
 
     def is_fresh(self, entry: CacheEntry, ttl: float | None = None) -> bool:
         return time.time() - entry.fetched_at < (self.ttl if ttl is None else ttl)
+
+    def touch(self, namespace: str, key: str) -> None:
+        """Mark an entry as used (at most once a day), so pruning keeps it."""
+        if not self.enabled:
+            return
+        path = self._path(namespace, key)
+        with contextlib.suppress(OSError):
+            if time.time() - path.stat().st_mtime > DAY:
+                os.utime(path)
+
+    def prune(self) -> int:
+        """Delete entries unused for ``max_age`` and those of older layouts; at most daily.
+
+        Only ``*.json`` files inside the known namespace folders are ever deleted, so a
+        ``STACKCHECK_CACHE_DIR`` shared with other data is safe. Returns the count.
+        """
+        if not self.enabled or self.max_age <= 0:
+            return 0
+        assert self.root is not None
+        marker = self.root / ".pruned"
+        now = time.time()
+        try:
+            if now - marker.stat().st_mtime < DAY:
+                return 0
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return 0
+        removed = 0
+        for layout in self.root.parent.iterdir() if self.root.parent.is_dir() else []:
+            if not _LAYOUT.match(layout.name) or not layout.is_dir():
+                continue
+            current = layout.name == LAYOUT_VERSION
+            for namespace in NAMESPACES:
+                folder = layout / namespace
+                if not folder.is_dir():
+                    continue
+                for path in folder.iterdir():
+                    if path.suffix != ".json":
+                        continue
+                    with contextlib.suppress(OSError):
+                        age = now - path.stat().st_mtime
+                        temporary = path.name.startswith(".tmp-") and age > 3600
+                        if not current or age > self.max_age or temporary:
+                            path.unlink()
+                            removed += 1
+                with contextlib.suppress(OSError):
+                    folder.rmdir()  # only when empty
+            if not current:
+                with contextlib.suppress(OSError):
+                    layout.rmdir()
+        with contextlib.suppress(OSError):
+            self.root.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+        if removed:
+            log.info("pruned %d cache entries", removed)
+        return removed
 
     def put(self, namespace: str, key: str, data: Any) -> None:
         if not self.enabled:
@@ -163,6 +238,7 @@ class Fetcher:
                 raise NotFoundError(_missing(entry.data))
             entry = None  # an expired "not found" is never served as stale data
         if entry is not None and (immutable or self.cache.is_fresh(entry)):
+            self.cache.touch(namespace, key)
             return entry.data
         try:
             data = await load()

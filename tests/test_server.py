@@ -224,6 +224,7 @@ def stdio_params(tmp_path: Path) -> StdioServerParameters:
         env={
             "STACKCHECK_CACHE_DIR": str(cache),
             "STACKCHECK_CACHE_TTL": str(10**10),
+            "STACKCHECK_CACHE_MAX_AGE": "0",  # copied fixtures keep old mtimes
             "HTTPS_PROXY": dead_proxy,
             "HTTP_PROXY": dead_proxy,
             "NO_PROXY": "",
